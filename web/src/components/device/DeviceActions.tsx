@@ -10,6 +10,8 @@ import { DeviceDialogs, type DeviceDialogKind } from './DeviceDialogs'
 
 export interface DeviceActionsProps {
   device: Device
+  /** On-demand disco ping is admin-only. */
+  canPing?: boolean
   /** Identity is admin AND the hub has admin actions enabled. */
   canManage: boolean
   /** Open a specific dialog from elsewhere on the page (e.g. the Routes card). */
@@ -17,8 +19,8 @@ export interface DeviceActionsProps {
   onDialogHandled?: () => void
 }
 
-/** Ping button (viewer) plus the admin "Manage" menu and its dialogs. */
-export function DeviceActions({ device, canManage, requestedDialog = null, onDialogHandled }: DeviceActionsProps) {
+/** Optional ping button (admin) plus the admin "Manage" menu and its dialogs. */
+export function DeviceActions({ device, canPing = false, canManage, requestedDialog = null, onDialogHandled }: DeviceActionsProps) {
   const ping = usePing()
   const authorize = useAuthorize()
   const keyExpiry = useSetKeyExpiry()
@@ -65,9 +67,11 @@ export function DeviceActions({ device, canManage, requestedDialog = null, onDia
 
   return (
     <>
-      <Button size="sm" leadingIcon={Radar} onClick={runPing} loading={ping.isPending} aria-label={`Ping ${device.name}`}>
-        Ping
-      </Button>
+      {canPing ? (
+        <Button size="sm" leadingIcon={Radar} onClick={runPing} loading={ping.isPending} aria-label={`Ping ${device.name}`}>
+          Ping
+        </Button>
+      ) : null}
       {canManage ? (
         <DropdownMenu
           label="Manage device"
