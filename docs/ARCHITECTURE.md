@@ -247,7 +247,7 @@ on restart, open alerts are loaded from the store so they resolve properly.
 func New(seed int64, log *slog.Logger) *Sim // implements source.LocalSource, source.ControlAPI, source.AgentClient
 func (s *Sim) Backfill(ctx, st *store.Store, d time.Duration, step time.Duration) error // synthetic history if store empty
 ```
-~16 devices with realistic names/OSes (hub "netwatch-hub" linux, a NAS, a
+~16 devices with realistic names/OSes (hub "tailwatch-hub" linux, a NAS, a
 Raspberry Pi, laptops macOS/windows, phones iOS/android, a cloud VM tagged
 `tag:server` acting as exit node, a subnet router, a shared-in external node,
 one unauthorized node, one with key expiring in 3 days, one running an old
@@ -284,8 +284,9 @@ In demo mode: `Backfill(24h, poll interval)` if the store has no samples.
 ### `cmd/tailwatch-agent`
 
 Flags/env (`TAILWATCH_AGENT_*`): `--listen` (default auto = Tailscale IPv4:41820),
-`--port`, `--auth` (`whois`|`token`|`both`, default `whois`), `--token`
-(env only: `TAILWATCH_AGENT_TOKEN`), `--allow-user` (repeatable login names),
+`--port`, `--auth` (`whois`|`token`|`both`, default `whois`), the shared token
+(environment only: `TAILWATCH_AGENT_TOKEN`; a `--token` flag is rejected so the
+secret never appears in `ps`), `--allow-user` (repeatable login names),
 `--allow-tag` (repeatable), `--allow-node` (repeatable MagicDNS names), `--interval`
 (default 5s), `--socket`. With `whois` and no allow-lists, only requests from
 nodes owned by the same user as this node, or from tagged nodes carrying

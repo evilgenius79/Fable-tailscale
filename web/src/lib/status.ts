@@ -1,4 +1,4 @@
-import type { AgentState, Alert, AlertState, Device, EventType, PathType, Severity } from '@/api/types'
+import type { AgentState, Alert, AlertState, Device, EventType, PathType, Severity } from '../api/types'
 
 /** The visual status vocabulary used by StatusDot / Badge / StatTile tones. */
 export type StatusTone = 'online' | 'offline' | 'warning' | 'critical' | 'relay' | 'direct' | 'info' | 'neutral' | 'accent'

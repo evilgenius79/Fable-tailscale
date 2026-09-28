@@ -1,0 +1,80 @@
+# Tailwatch agent — hardened systemd unit.
+#
+# Install:   sudo cp tailwatch-agent.service /etc/systemd/system/
+#            sudo systemctl daemon-reload && sudo systemctl enable --now tailwatch-agent
+# Configure: /etc/tailwatch/agent.env (mode 0600, root:root). Put the shared
+#            token (TAILWATCH_AGENT_TOKEN=...) and extra flags (TAILWATCH_AGENT_OPTS=...)
+#            there. See docs/AGENT.md.
+# Logs:      journalctl -u tailwatch-agent -f
+#
+# The agent is read-only: it samples /proc and /sys, asks the local tailscaled
+# "who is this?" for every request, and serves JSON on the device's Tailscale
+# IP only (port 41820 by default).
+
+[Unit]
+Description=Tailwatch agent (per-device metrics for the Tailwatch hub)
+Documentation=https://github.com/evilgenius79/fable-tailscale/blob/main/docs/AGENT.md
+After=network-online.target tailscaled.service
+Wants=network-online.target
+Requires=tailscaled.service
+
+[Service]
+Type=simple
+# Dedicated unprivileged user (created by scripts/install-agent.sh).
+# DynamicUser=yes also works: the agent keeps no state.
+User=tailwatch-agent
+Group=tailwatch-agent
+# Uncomment if your tailscaled socket is group-restricted (not the Linux default):
+#SupplementaryGroups=tailscale
+
+EnvironmentFile=-/etc/tailwatch/agent.env
+ExecStart=/usr/local/bin/tailwatch-agent $TAILWATCH_AGENT_OPTS
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+KillSignal=SIGTERM
+
+# --- Filesystem -------------------------------------------------------------
+# Nothing is written, ever.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+# ProtectProc=invisible is deliberately NOT set: the process count metric
+# needs to see other users' entries in /proc.
+UMask=0077
+
+# --- Privileges -------------------------------------------------------------
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+
+# --- Network / syscalls -----------------------------------------------------
+# AF_UNIX: tailscaled socket (WhoIs). AF_INET/AF_INET6: the listener.
+# AF_NETLINK: interface enumeration (Go's net.Interfaces()) for the
+# per-interface counters and Tailscale-IP detection.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+
+# --- Resources --------------------------------------------------------------
+LimitNOFILE=4096
+TasksMax=128
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

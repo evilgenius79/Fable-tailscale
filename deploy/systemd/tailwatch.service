@@ -1,0 +1,86 @@
+# Tailwatch hub — hardened systemd unit.
+#
+# Install:   sudo cp tailwatch.service /etc/systemd/system/
+#            sudo systemctl daemon-reload && sudo systemctl enable --now tailwatch
+# Configure: /etc/tailwatch/hub.env (mode 0600, root:root). See deploy/docker/hub.env.example
+#            for every TAILWATCH_* / TS_* variable. Extra flags go in TAILWATCH_OPTS.
+# Data:      /var/lib/tailwatch (StateDirectory, created by systemd, owned by the service user).
+# Logs:      journalctl -u tailwatch -f
+#
+# The hub only needs: the tailscaled LocalAPI socket (read access is enough for
+# status + WhoIs; disco pings need write access, see docs/DEPLOY.md), outbound
+# HTTPS to api.tailscale.com (optional) and TCP to agents on the tailnet.
+
+[Unit]
+Description=Tailwatch hub (Tailscale network viewer and watchdog)
+Documentation=https://github.com/evilgenius79/fable-tailscale
+After=network-online.target tailscaled.service
+Wants=network-online.target
+Requires=tailscaled.service
+
+[Service]
+Type=simple
+# Dedicated system user (created by scripts/install-hub.sh). To grant it
+# write access to tailscaled (needed for on-demand/periodic disco pings):
+#   sudo tailscale set --operator=tailwatch
+# Alternatively use DynamicUser=yes and set TAILWATCH_PING_INTERVAL=0.
+User=tailwatch
+Group=tailwatch
+# Uncomment if your tailscaled socket is group-restricted (not the Linux default):
+#SupplementaryGroups=tailscale
+
+Environment=TAILWATCH_DATA_DIR=/var/lib/tailwatch
+Environment=TAILWATCH_LOG_JSON=true
+EnvironmentFile=-/etc/tailwatch/hub.env
+ExecStart=/usr/local/bin/tailwatch $TAILWATCH_OPTS
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+KillSignal=SIGTERM
+
+# --- Filesystem -------------------------------------------------------------
+StateDirectory=tailwatch
+StateDirectoryMode=0700
+# Read-only everything except the state directory. TLS certs from
+# `tailscale cert` may live under /etc/tailwatch/tls (readable by the user).
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+UMask=0077
+
+# --- Privileges -------------------------------------------------------------
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+
+# --- Network / syscalls -----------------------------------------------------
+# AF_UNIX: tailscaled socket. AF_INET/AF_INET6: listener, agents, control API.
+# AF_NETLINK: Go's net.Interfaces() (used to find the Tailscale IP for
+# --listen auto); drop it if you always pass an explicit --listen.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+
+# --- Resources --------------------------------------------------------------
+LimitNOFILE=65536
+TasksMax=512
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

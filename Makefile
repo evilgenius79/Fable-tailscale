@@ -30,7 +30,7 @@ agent:
 test: test-go test-web
 
 test-go:
-	go test -race -count=1 ./...
+	CGO_ENABLED=1 go test -race -count=1 ./...
 
 test-web:
 	cd web && npm run typecheck && npm test

@@ -1,0 +1,50 @@
+# Weekly dependency updates. Grouped so one PR per ecosystem lands per week.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      go-deps:
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+      - go
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      npm-deps:
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+      - web
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+      - ci
+
+  - package-ecosystem: docker
+    directory: /deploy/docker
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - docker

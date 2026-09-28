@@ -1,0 +1,25 @@
+{
+  "name": "Tailwatch",
+  "short_name": "Tailwatch",
+  "description": "Tailscale network viewer and watchdog",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0a0c",
+  "theme_color": "#0a0a0c",
+  "categories": ["utilities", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Devices", "url": "/devices", "description": "All devices on the tailnet" },
+    { "name": "Alerts", "url": "/alerts", "description": "Open alerts and watchdog rules" },
+    { "name": "Network map", "url": "/network", "description": "Topology and relay usage" }
+  ]
+}

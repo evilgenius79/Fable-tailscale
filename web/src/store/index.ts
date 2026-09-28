@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import type { HubInfo } from '@/api/types'
-import { applyTheme, resolveTheme, type ResolvedTheme, type ThemePreference } from '@/lib/theme'
-import { DEFAULT_RANGE, isRangeKey, type RangeKey } from '@/lib/time'
+import type { HubInfo } from '../api/types'
+import { applyTheme, resolveTheme, type ResolvedTheme, type ThemePreference } from '../lib/theme'
+import { DEFAULT_RANGE, isRangeKey, type RangeKey } from '../lib/time'
 
 /** Live-stream connection state as shown in the top bar. */
 export type LiveState = 'connecting' | 'connected' | 'reconnecting' | 'polling'

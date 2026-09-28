@@ -1,0 +1,96 @@
+# Tailwatch hub — Docker Compose.
+#
+#   cp hub.env.example hub.env && chmod 600 hub.env   # edit it
+#   docker compose up -d
+#   docker compose logs -f
+#
+# Two ways to give the hub a tailnet identity:
+#   A) (default, below) share the HOST's tailscaled: host networking + the
+#      LocalAPI socket bind-mounted read-write. The hub shows up as the host's
+#      node and binds the host's Tailscale IP.
+#   B) (commented) a `tailscale/tailscale` sidecar: the hub joins the tailnet
+#      as its own node ("tailwatch"), sharing the sidecar's network namespace.
+#
+# No HEALTHCHECK is possible in a distroless image (no shell). Probe from the
+# host instead:  curl -fsS http://$(tailscale ip -4):8484/healthz
+# Pings: the LocalAPI ping endpoint needs write access to tailscaled, which the
+# unprivileged container user does not have. Set TAILWATCH_PING_INTERVAL=0
+# unless you configure an operator (docs/DEPLOY.md); everything else works.
+
+services:
+  tailwatch:
+    image: ghcr.io/evilgenius79/tailwatch:latest
+    container_name: tailwatch
+    restart: unless-stopped
+    # A) host networking: bind the host's Tailscale IP, see real peer IPs for WhoIs.
+    network_mode: host
+    env_file:
+      - hub.env
+    environment:
+      TAILWATCH_DATA_DIR: /data
+      TAILWATCH_SOCKET: /var/run/tailscale/tailscaled.sock
+    volumes:
+      - tailwatch-data:/data
+      # tailscaled LocalAPI socket (read-write: unix sockets need write to connect)
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # If you bind-mount a host directory instead of the named volume,
+    # chown it to 65532:65532 (the distroless "nonroot" user).
+    # user: "65532:65532"
+
+# ---------------------------------------------------------------------------
+# B) Sidecar variant: the hub gets its own tailnet node via the official
+#    tailscale image. Requires kernel networking (TUN) so the hub can bind the
+#    node's Tailscale IP and reach agents; userspace mode will NOT work here.
+#    Create an auth key tagged tag:tailwatch-hub (reusable, pre-authorised) and
+#    export TS_AUTHKEY before `docker compose up`.
+#
+#  tailscale:
+#    image: tailscale/tailscale:latest
+#    container_name: tailwatch-tailscale
+#    hostname: tailwatch
+#    restart: unless-stopped
+#    environment:
+#      TS_AUTHKEY: ${TS_AUTHKEY}
+#      TS_STATE_DIR: /var/lib/tailscale
+#      TS_USERSPACE: "false"
+#      TS_EXTRA_ARGS: --advertise-tags=tag:tailwatch-hub
+#    volumes:
+#      - tailscale-state:/var/lib/tailscale
+#      - tailscale-sock:/var/run/tailscale
+#    devices:
+#      - /dev/net/tun:/dev/net/tun
+#    cap_add:
+#      - NET_ADMIN
+#      # add SYS_MODULE only if the host has not loaded the tun module
+#
+#  tailwatch:
+#    image: ghcr.io/evilgenius79/tailwatch:latest
+#    container_name: tailwatch
+#    restart: unless-stopped
+#    network_mode: service:tailscale
+#    depends_on:
+#      - tailscale
+#    env_file:
+#      - hub.env
+#    environment:
+#      TAILWATCH_DATA_DIR: /data
+#      TAILWATCH_SOCKET: /var/run/tailscale/tailscaled.sock
+#      TAILWATCH_PING_INTERVAL: "0"
+#    volumes:
+#      - tailwatch-data:/data
+#      - tailscale-sock:/var/run/tailscale
+#    read_only: true
+#    cap_drop:
+#      - ALL
+#    security_opt:
+#      - no-new-privileges:true
+
+volumes:
+  tailwatch-data:
+#  tailscale-state:
+#  tailscale-sock:

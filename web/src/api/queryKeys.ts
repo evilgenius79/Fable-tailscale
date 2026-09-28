@@ -1,4 +1,4 @@
-import type { RangeKey } from '@/lib/time'
+import type { RangeKey } from '../lib/time'
 
 export interface EventsParams {
   limit?: number

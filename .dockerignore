@@ -1,0 +1,24 @@
+# Build context for deploy/docker/Dockerfile (context = repository root).
+.git
+.github
+bin
+dist
+data
+data-demo
+docs
+deploy
+scripts
+*.md
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+*.pem
+*.key
+web/node_modules
+web/dist
+web/.vite
+web/playwright-report
+web/test-results
+web/screenshots

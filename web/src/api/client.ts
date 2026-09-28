@@ -141,7 +141,7 @@ function isJsonResponse(res: Response): boolean {
 /** Turn a non-2xx Response into an ApiError, reading the documented envelope when present. */
 export async function errorFromResponse(res: Response): Promise<ApiError> {
   let code: ApiErrorCode = statusToCode(res.status)
-  let message = res.statusText || `HTTP ${res.status}`
+  let message: string | null = null
   try {
     if (isJsonResponse(res)) {
       const data = (await res.json()) as unknown
@@ -153,19 +153,20 @@ export async function errorFromResponse(res: Response): Promise<ApiError> {
         }
       }
     } else {
-      const text = await res.text()
-      if (text && text.length < 200) message = text.trim() || message
+      const text = (await res.text()).trim()
+      if (text && text.length < 200 && !text.startsWith('<')) message = text
     }
   } catch {
     /* body unreadable; keep defaults */
   }
-  if (message === `HTTP ${res.status}` || message === res.statusText) {
+  if (message === null) {
     // Friendlier defaults for the common cases.
     if (res.status === 401) message = 'Your request could not be attributed to a tailnet identity.'
     else if (res.status === 403) message = 'You do not have permission to do that.'
     else if (res.status === 404) message = 'The requested resource was not found.'
     else if (res.status === 429) message = 'Too many requests. Please wait a moment.'
     else if (res.status >= 500) message = 'The hub reported an internal error.'
+    else message = res.statusText || `HTTP ${res.status}`
   }
   return new ApiError(code, message, res.status)
 }

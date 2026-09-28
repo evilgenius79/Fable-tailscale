@@ -1,0 +1,271 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: auto
+  CGO_ENABLED: "0"
+
+jobs:
+  go:
+    name: Go (fmt, vet, test, vulncheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Ensure embed placeholder
+        # web/embed.go uses `//go:embed all:dist`; the directory must exist and
+        # contain at least one file even when the UI is not built.
+        run: |
+          mkdir -p web/dist
+          [ -n "$(ls -A web/dist)" ] || touch web/dist/.gitkeep
+
+      - name: gofmt
+        run: |
+          out="$(gofmt -l cmd internal web/embed.go)"
+          if [ -n "$out" ]; then
+            echo "These files need gofmt:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test -race
+        # the race detector needs cgo even though the shipped binaries are built with CGO_ENABLED=0
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 ./...
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  web:
+    name: Web (typecheck, test, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload built UI
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  assets:
+    name: Scripts and deploy assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: POSIX sh syntax
+        run: |
+          for f in scripts/*.sh; do
+            sh -n "$f" && echo "ok: $f"
+          done
+
+      - name: shellcheck
+        run: shellcheck -s sh -S warning scripts/*.sh
+
+      - name: Embedded units match deploy/systemd
+        run: |
+          diff <(sh scripts/install-agent.sh --print-unit) deploy/systemd/tailwatch-agent.service
+          diff <(sh scripts/install-hub.sh --print-unit) deploy/systemd/tailwatch.service
+          echo "units match"
+
+      - name: Installer dry runs
+        run: |
+          sh scripts/install-agent.sh --dry-run --allow-tag tag:tailwatch-hub
+          sh scripts/install-hub.sh --dry-run --admin alice@example.com
+          # as root with a non-TTY stdin the installer must refuse to proceed without --yes
+          if sudo -n sh scripts/install-agent.sh --binary /bin/true </dev/null; then
+            echo "installer ran without --yes"; exit 1
+          fi
+
+      - name: YAML is valid
+        run: |
+          python3 - <<'PY'
+          import glob, yaml
+          files = glob.glob(".github/workflows/*.yml") + [".github/dependabot.yml", "deploy/docker/docker-compose.yml"]
+          for f in files:
+              with open(f) as fh:
+                  yaml.safe_load(fh)
+              print("ok:", f)
+          PY
+
+      - name: systemd unit lint
+        run: |
+          # systemd-analyze rejects units whose ExecStart binary is missing, so
+          # stage a placeholder first.
+          sudo install -m 0755 /bin/true /usr/local/bin/tailwatch
+          sudo install -m 0755 /bin/true /usr/local/bin/tailwatch-agent
+          systemd-analyze verify --recursive-errors=no deploy/systemd/tailwatch.service deploy/systemd/tailwatch-agent.service
+          systemd-analyze security --offline=true --no-pager deploy/systemd/tailwatch.service | tail -n 1
+          systemd-analyze security --offline=true --no-pager deploy/systemd/tailwatch-agent.service | tail -n 1
+
+  docker:
+    name: Docker image (build only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          push: false
+          load: true
+          tags: tailwatch:ci
+          build-args: |
+            VERSION=ci
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+
+      - name: Image runs the demo hub
+        # distroless has no shell, so drive the entrypoint directly: host
+        # networking lets the runner curl the loopback listener.
+        run: |
+          docker run -d --name tailwatch-ci --network host --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true tailwatch:ci \
+            --demo --listen 127.0.0.1:8484 --data-dir /data
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8484/healthz; then
+              echo "container hub is up after ${i}s"; break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8484/api/v1/overview | jq -e '.hub.demoMode == true'
+          docker logs tailwatch-ci | tail -n 20
+          docker rm -f tailwatch-ci
+
+  smoke:
+    name: Demo hub smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download built UI
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: Build hub with embedded UI
+        run: |
+          test -f web/dist/index.html
+          make hub VERSION=ci
+
+      - name: Start demo hub
+        run: |
+          ./bin/tailwatch --demo --listen 127.0.0.1:8484 --data-dir ./data-demo > hub.log 2>&1 &
+          echo $! > hub.pid
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8484/healthz; then
+              echo "hub is up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "hub did not become healthy"; cat hub.log; exit 1
+
+      - name: GET /healthz
+        run: |
+          body="$(curl -fsS -w '\n%{http_code}' http://127.0.0.1:8484/healthz)"
+          echo "$body"
+          [ "$(printf '%s' "$body" | tail -n1)" = "200" ]
+          [ "$(printf '%s' "$body" | head -n1)" = "ok" ]
+
+      - name: GET /api/v1/overview
+        run: |
+          curl -fsS -D headers.txt -o overview.json http://127.0.0.1:8484/api/v1/overview
+          cat headers.txt
+          grep -qi '^content-type: application/json' headers.txt
+          grep -qi '^content-security-policy:' headers.txt
+          grep -qi '^cache-control: no-store' headers.txt
+          jq -e '.hub.demoMode == true and .devices > 0 and (.hub.version | type) == "string"' overview.json
+          jq '{devices, online, offline, direct, relayed, agentsReachable, openAlerts}' overview.json
+
+      - name: GET /api/v1/devices and the UI
+        run: |
+          curl -fsS http://127.0.0.1:8484/api/v1/devices | jq -e 'type == "array" and length > 0 and (.[0] | has("id") and has("connectivity") and has("agent"))'
+          curl -fsS -D ui.txt -o ui.html http://127.0.0.1:8484/
+          grep -qi '^content-type: text/html' ui.txt
+          grep -q '<div id="root">' ui.html
+
+      - name: Browser hardening rejects cross-site and header-less writes
+        run: |
+          code="$(curl -s -o /dev/null -w '%{http_code}' -H 'Sec-Fetch-Site: cross-site' http://127.0.0.1:8484/api/v1/overview)"
+          [ "$code" = "403" ] || { echo "expected 403 for cross-site, got $code"; exit 1; }
+          code="$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8484/api/v1/refresh)"
+          [ "$code" = "403" ] || { echo "expected 403 without X-Requested-With, got $code"; exit 1; }
+          code="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'X-Requested-With: tailwatch' http://127.0.0.1:8484/api/v1/refresh)"
+          [ "$code" = "202" ] || { echo "expected 202 for refresh, got $code"; exit 1; }
+
+      - name: Stop hub gracefully
+        run: |
+          kill -TERM "$(cat hub.pid)"
+          timeout 15 tail --pid="$(cat hub.pid)" -f /dev/null
+          echo "hub exited"
+          tail -n 20 hub.log
+
+      - name: Hub log on failure
+        if: failure()
+        run: cat hub.log || true

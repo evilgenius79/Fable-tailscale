@@ -45,9 +45,11 @@ Identities that match neither list get `403`.
 { "error": { "code": "not_found", "message": "device not found" } }
 ```
 
-Codes: `bad_request`, `unauthorized`, `forbidden`, `not_found`, `rate_limited`,
-`not_configured` (control API / admin actions disabled), `upstream` (Tailscale
-API or LocalAPI failure), `internal`.
+Codes and their HTTP statuses: `bad_request` (400; also 413 for an oversized
+body), `unauthorized` (401), `forbidden` (403), `not_found` (404; also 405 with
+an `Allow` header for a wrong method on a known path), `rate_limited` (429),
+`not_configured` (501; control API / admin actions disabled), `upstream` (502;
+Tailscale API or LocalAPI failure), `internal` (500).
 
 ## Endpoints
 
@@ -69,7 +71,7 @@ API or LocalAPI failure), `internal`.
 | POST | `/api/v1/devices/{id}/routes` | admin* | `{ "routes": ["10.0.0.0/24"] }` → `Device` |
 | POST | `/api/v1/devices/{id}/name` | admin* | `{ "name": "new-name" }` → `Device` |
 | DELETE | `/api/v1/devices/{id}` | admin* | `204` |
-| GET | `/api/v1/events?limit=100&since=RFC3339&type=device.offline&device=ID` | viewer | `Event[]` newest first |
+| GET | `/api/v1/events?limit=100&since=RFC3339&before=RFC3339&type=device.offline,device.online&device=ID` | viewer | `Event[]` newest first (`before` pages backwards; `type` is a comma-separated list) |
 | GET | `/api/v1/alerts?state=open\|resolved\|all&device=ID&limit=200` | viewer | `Alert[]` newest first |
 | POST | `/api/v1/alerts/{id}/ack` | admin | `Alert` |
 | GET | `/api/v1/alerts/rules` | viewer | `AlertRule[]` |
@@ -138,14 +140,14 @@ until it resolves.
 
 ## Notifications
 
-Configured via flags/env (never exposed by the API):
+Configured via flags/env (never exposed by the API; secrets are environment-only):
 
 * `--webhook-url` generic JSON POST `{ "type": "alert.opened"|"alert.resolved", "alert": Alert, "hub": HubInfo }`.
-  With `--webhook-secret`, header `X-Tailwatch-Signature: sha256=<hex hmac of body>` is added.
+  With `TAILWATCH_WEBHOOK_SECRET` set, header `X-Tailwatch-Signature: sha256=<hex hmac of body>` is added.
 * `--slack-webhook-url` Slack/Discord-compatible `{ "text": "..." }` payload.
-* `--ntfy-url` (e.g. `https://ntfy.sh/mytopic`) with optional `--ntfy-token`.
+* `--ntfy-url` (e.g. `https://ntfy.sh/mytopic`) with optional `TAILWATCH_NTFY_TOKEN`.
 
 ## Agent protocol
 
 See `internal/agentproto`. The hub calls `GET http://<tailscale-ip>:<port>/v1/metrics`
-with a 5s timeout and, if `--agent-token` is set, header `X-Tailwatch-Token`.
+with a 5s timeout and, if `TAILWATCH_AGENT_TOKEN` is set, header `X-Tailwatch-Token`.
