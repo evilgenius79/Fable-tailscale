@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -90,6 +91,26 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	if cfg.InsecureListenAny {
 		log.Warn("--insecure-listen-any is set; the hub may be reachable from outside the tailnet")
+	}
+	if !cfg.Demo && !cfg.InsecureNoAuth && len(cfg.Admins) == 0 && len(cfg.AdminTags) == 0 {
+		log.Warn("no --admins or --admin-tags configured; every caller is a viewer and nobody can ack alerts or edit rules")
+	}
+	if !cfg.Demo && !cfg.InsecureNoAuth {
+		for _, v := range cfg.Viewers {
+			if v == "*" {
+				log.Warn("--viewers defaults to *; any tailnet identity that can reach the hub can read inventory and metrics (narrow --viewers / --viewer-tags on shared tailnets)")
+				break
+			}
+		}
+	}
+	for _, u := range []struct{ name, raw string }{
+		{"webhook", cfg.WebhookURL},
+		{"slack", cfg.SlackWebhookURL},
+		{"ntfy", cfg.NtfyURL},
+	} {
+		if strings.HasPrefix(u.raw, "http://") {
+			log.Warn("notifier URL is plain HTTP; prefer HTTPS so tokens and alert bodies are not sent in the clear", "notifier", u.name)
+		}
 	}
 
 	if err := serve(ctx, cfg, log); err != nil {
