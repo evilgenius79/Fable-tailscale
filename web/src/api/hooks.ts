@@ -7,6 +7,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPost, apiPut, seg } from './client'
 import { queryKeys, type AlertsParams, type EventsParams } from './queryKeys'
+import { markLocalAck } from './sse'
 import type {
   Alert,
   AlertRule,
@@ -275,6 +276,8 @@ export function useAckAlert() {
   const qc = useQueryClient()
   return useMutation<Alert, Error, number>({
     mutationFn: (id) => apiPost<Alert>(`/alerts/${seg(id)}/ack`),
+    // The stream echoes the ack (possibly before this response); the caller's own toast is the only one wanted.
+    onMutate: (id) => markLocalAck(id),
     onSuccess: (a) => {
       qc.setQueriesData<Alert[]>({ queryKey: queryKeys.alertsAll }, (list) => (Array.isArray(list) ? list.map((x) => (x.id === a.id ? a : x)) : list))
       if (a.deviceId) {

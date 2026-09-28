@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties, type RefObject } from 'react'
 
-const FADE = 28
+const FADE = 40
 
 /**
  * Horizontal scroll affordance for `overflow-x-auto` strips that hide their

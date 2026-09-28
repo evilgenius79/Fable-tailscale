@@ -156,8 +156,10 @@ export default function DeviceDetailPage() {
         compact
       >
         <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
-          {/* No flex-1/min-w-0 here: the strip keeps its intrinsic width so the picker wraps below it instead of squeezing the tabs. */}
-          <Tabs tabs={tabs} value={tab} onValueChange={setTab} aria-label="Device sections" idPrefix="device-tab" />
+          {/* flex-auto (not flex-1): the strip's basis is its intrinsic width, so the picker wraps below it instead of
+              squeezing the tabs, while the underline still spans the line when both fit. Narrower than the strip itself
+              (phones) it scrolls, with a fade on the clipped edge. */}
+          <Tabs tabs={tabs} value={tab} onValueChange={setTab} aria-label="Device sections" idPrefix="device-tab" className="min-w-0 flex-auto" />
           {tab === 'overview' ? (
             <div className="pb-1.5">
               <TimeRangePicker value={range} onValueChange={setRange} options={RANGE_OPTIONS} aria-label="Chart time range" />

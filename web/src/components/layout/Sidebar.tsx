@@ -87,13 +87,14 @@ function HubFooter({ collapsed }: { collapsed: boolean }) {
   // slow, the overview (already fetched by every page) carries the same HubInfo.
   const overview = useOverview()
   const hub = streamHub ?? overview.data?.hub ?? null
-  if (collapsed) return null
+  // Nothing (rather than '—' / 'v—') until either source has delivered it.
+  if (collapsed || !hub) return null
   return (
     <div className="px-4 pb-3 text-[11px] leading-4 text-fg-muted">
-      <p className="truncate font-medium text-fg-secondary">{hub?.tailnet ?? '—'}</p>
+      <p className="truncate font-medium text-fg-secondary">{hub.tailnet}</p>
       <p className="truncate">
-        v{hub?.version ?? '—'}
-        {hub?.demoMode ? ' · demo' : ''}
+        v{hub.version}
+        {hub.demoMode ? ' · demo' : ''}
       </p>
     </div>
   )

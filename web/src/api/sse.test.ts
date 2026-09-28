@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient } from '@tanstack/react-query'
-import { applyAlert, applyEvent, applyTick, eventMatches } from './sse'
+import { applyAlert, applyEvent, applyTick, eventMatches, markLocalAck, toastForAlert } from './sse'
+import { toast } from '../components/ui/Toast'
 import { queryKeys } from './queryKeys'
 import { createMockState, overview } from './mockData'
 import type { Alert, Device, DeviceDetail, Event } from './types'
@@ -73,5 +74,31 @@ describe('applyAlert', () => {
     expect(qc.getQueryData(queryKeys.rules)).toBe(rules)
     expect(qc.getQueryState(queryKeys.rules)?.isInvalidated).toBe(false)
     expect(qc.getQueryState(queryKeys.alerts({ state: 'open', limit: 200 }))?.isInvalidated).toBe(true)
+  })
+})
+
+vi.mock('../components/ui/Toast', () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() }) }))
+
+describe('toastForAlert', () => {
+  const base = { id: 7, title: 'High CPU on x', severity: 'warning', state: 'open', message: 'm' } as Alert
+  beforeEach(() => vi.mocked(toast).mockClear())
+
+  it('skips the stream echo of an ack this client made, once', () => {
+    markLocalAck(7)
+    toastForAlert({ ...base, ackedAt: '2026-09-28T12:00:00Z', ackedBy: 'me' })
+    expect(toast).not.toHaveBeenCalled()
+    // A later ack of the same alert (e.g. by someone else after a re-open) is shown again.
+    toastForAlert({ ...base, ackedAt: '2026-09-28T12:05:00Z', ackedBy: 'them' })
+    expect(toast).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(toast).mock.calls[0]![0]).toMatchObject({ id: 'alert-7', tone: 'info', title: 'Acknowledged: High CPU on x', description: 'by them' })
+  })
+
+  it('toasts acks made elsewhere and resolutions, keyed per alert', () => {
+    toastForAlert({ ...base, ackedAt: '2026-09-28T12:00:00Z', ackedBy: 'bob' })
+    toastForAlert({ ...base, state: 'resolved', resolvedAt: '2026-09-28T12:01:00Z' })
+    expect(vi.mocked(toast).mock.calls.map((c) => c[0])).toMatchObject([
+      { id: 'alert-7', tone: 'info' },
+      { id: 'alert-7', tone: 'success', title: 'Resolved: High CPU on x' },
+    ])
   })
 })

@@ -94,11 +94,30 @@ function toastForEvent(e: Event) {
   toast({ id: `event-${e.id}`, tone: e.severity === 'critical' ? 'error' : 'warning', title: e.title, description: e.message })
 }
 
-/** Toast ids are `alert-<id>`; the ack mutations use the same id so the actor sees one toast, not two. */
-function toastForAlert(a: Alert) {
+// Alerts this client acknowledged itself (id → deadline). The ack mutation
+// raises its own confirmation toast, so the stream's "Acknowledged: …" for the
+// same alert is dropped instead of stacking a second toast for one action.
+const localAcks = new Map<number, number>()
+const LOCAL_ACK_TTL_MS = 15_000
+
+/** Record that this client is acknowledging `id` (called by `useAckAlert` before the request). */
+export function markLocalAck(id: number): void {
+  localAcks.set(id, Date.now() + LOCAL_ACK_TTL_MS)
+}
+
+function consumeLocalAck(id: number): boolean {
+  const until = localAcks.get(id)
+  if (until === undefined) return false
+  localAcks.delete(id)
+  return until > Date.now()
+}
+
+/** Toast for an alert from the stream. Ids are `alert-<id>`, so a later change to the same alert replaces the toast. Exported for tests. */
+export function toastForAlert(a: Alert): void {
   if (a.state === 'resolved') {
     toast({ id: `alert-${a.id}`, tone: 'success', title: `Resolved: ${a.title}`, description: a.deviceName })
   } else if (a.ackedAt) {
+    if (consumeLocalAck(a.id)) return
     toast({ id: `alert-${a.id}`, tone: 'info', title: `Acknowledged: ${a.title}`, description: a.ackedBy ? `by ${a.ackedBy}` : undefined })
   } else {
     toast({ id: `alert-${a.id}`, tone: a.severity === 'critical' ? 'error' : a.severity === 'warning' ? 'warning' : 'info', title: a.title, description: a.message })

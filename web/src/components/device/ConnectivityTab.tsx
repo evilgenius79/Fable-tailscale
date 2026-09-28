@@ -201,7 +201,7 @@ export function ConnectivityTab({ device, canManage, onApproveRoutes }: Connecti
                 <span className="min-w-0">
                   <span className="flex items-center gap-2 text-[13px] text-fg">
                     {r.label}
-                    <span className={cn('text-xs', good === null ? 'text-fg-faint' : good ? 'text-online' : 'text-warning')}>
+                    <span className={cn('text-xs', good === null ? 'text-fg-muted' : good ? 'text-online' : 'text-warning')}>
                       {r.supported === null ? 'unknown' : r.supported ? (r.goodWhenTrue ? 'supported' : 'yes') : r.goodWhenTrue ? 'unsupported' : 'no'}
                     </span>
                   </span>

@@ -47,7 +47,7 @@ export function ErrorState({ error, title, description, onRetry, retrying, compa
         <p className="text-base font-semibold text-fg">{heading}</p>
         {detail ? <p className="mt-1 text-sm leading-6 text-fg-muted break-words">{detail}</p> : null}
         {isApiError(error) && error.status ? (
-          <p className="mt-2 font-mono text-[11px] text-fg-faint">
+          <p className="mt-2 font-mono text-[11px] text-fg-muted">
             {error.code} · HTTP {error.status}
           </p>
         ) : null}

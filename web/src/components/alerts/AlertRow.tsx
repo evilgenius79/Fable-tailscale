@@ -89,7 +89,7 @@ export function AlertRow({ alert: a, isAdmin, acking, onAck, now }: AlertRowProp
               {a.deviceName}
             </Link>
           ) : null}
-          <span className="hidden text-fg-faint sm:inline">{meta.label}</span>
+          <span className="hidden text-fg-muted sm:inline">{meta.label}</span>
           <Time label="opened" ts={a.openedAt} now={now} />
           {open && a.updatedAt !== a.openedAt ? <Time label="updated" ts={a.updatedAt} now={now} /> : null}
           {a.resolvedAt ? <Time label="resolved" ts={a.resolvedAt} now={now} /> : null}
