@@ -58,7 +58,7 @@ jobs:
 
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           govulncheck ./...
 
   web:
@@ -123,6 +123,9 @@ jobs:
         run: |
           sh scripts/install-agent.sh --dry-run --allow-tag tag:tailwatch-hub
           sh scripts/install-hub.sh --dry-run --admin alice@example.com
+          if sh scripts/install-hub.sh --dry-run; then
+            echo "hub installer accepted a service install without --admin"; exit 1
+          fi
           # as root with a non-TTY stdin the installer must refuse to proceed without --yes
           if sudo -n sh scripts/install-agent.sh --binary /bin/true </dev/null; then
             echo "installer ran without --yes"; exit 1
