@@ -65,7 +65,21 @@ export function KpiRow({ overview: o, loading }: KpiRowProps) {
           icon={Timer}
         />
       </div>
+      {/* With the Unauthorized tile the row is 2 / 3 / 5 columns and that tile leads it: no double-width tile, and five
+          across only from xl where the size="sm" labels still fit (at lg the content is ~718px wide). */}
       <div className={cn('grid grid-cols-2 gap-3 xl:gap-4', showUnauthorized ? 'sm:grid-cols-3 xl:grid-cols-5' : 'lg:grid-cols-4')}>
+        {showUnauthorized && o ? (
+          <StatTile
+            size="sm"
+            label="Unauthorized"
+            value={formatInt(o.unauthorized)}
+            hint="awaiting approval"
+            tone="warning"
+            icon={ShieldAlert}
+            to="/devices?flags=unauthorized"
+            className="border-warning/40"
+          />
+        ) : null}
         <StatTile
           size="sm"
           label="Open alerts"
@@ -117,18 +131,6 @@ export function KpiRow({ overview: o, loading }: KpiRowProps) {
           icon={KeyRound}
           to="/devices?flags=keyExpiring"
         />
-        {showUnauthorized && o ? (
-          <StatTile
-            size="sm"
-            label="Unauthorized"
-            value={formatInt(o.unauthorized)}
-            hint="awaiting approval"
-            tone="warning"
-            icon={ShieldAlert}
-            to="/devices?flags=unauthorized"
-            className="col-span-2 border-warning/40 xl:col-span-1"
-          />
-        ) : null}
       </div>
     </div>
   )

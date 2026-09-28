@@ -13,9 +13,9 @@
 #
 # No HEALTHCHECK is possible in a distroless image (no shell). Probe from the
 # host instead:  curl -fsS http://$(tailscale ip -4):8484/healthz
-# Pings: the LocalAPI ping endpoint needs write access to tailscaled, which the
-# unprivileged container user does not have. Set TAILWATCH_PING_INTERVAL=0
-# unless you configure an operator (docs/DEPLOY.md); everything else works.
+# Pings: tailscaled serves the LocalAPI ping endpoint to read-only clients, so
+# the unprivileged container user can ping through the mounted socket. Set
+# TAILWATCH_PING_INTERVAL=0 only if your tailscaled denies them (docs/DEPLOY.md).
 
 services:
   tailwatch:
@@ -80,7 +80,6 @@ services:
 #    environment:
 #      TAILWATCH_DATA_DIR: /data
 #      TAILWATCH_SOCKET: /var/run/tailscale/tailscaled.sock
-#      TAILWATCH_PING_INTERVAL: "0"
 #    volumes:
 #      - tailwatch-data:/data
 #      - tailscale-sock:/var/run/tailscale

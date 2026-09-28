@@ -81,8 +81,8 @@ func (c *Collector) buildEntries(now time.Time, status *source.LocalStatus) []po
 // for identity, online state, path, byte counters, addresses, tags and
 // routes present in the netmap; the control API fills the fields only it
 // knows. prev is the device from the previous snapshot (nil when new) and
-// rateDT the seconds since the previous successful poll (0 disables rate
-// computation).
+// rateDT the seconds since the device's byte counters were last read from
+// the netmap (0 disables rate computation).
 func (c *Collector) mergeDevice(now time.Time, status *source.LocalStatus, e *pollEntry, prev *model.Device, rateDT float64) model.Device {
 	lp, ad := e.local, e.api
 	d := model.Device{ID: e.id, IsSelf: e.isSelf, Online: e.online, UpdatedAt: now}
@@ -119,7 +119,7 @@ func (c *Collector) mergeDevice(now time.Time, status *source.LocalStatus, e *po
 		d.Connectivity.TxBytes = lp.TxBytes
 		d.Connectivity.CurAddr = lp.CurAddr
 		// A node the daemon lists in its netmap has been admitted to the
-		// tailnet; the control API refines this below when available.
+		// tailnet: the control plane only distributes authorized nodes.
 		d.Authorized = true
 	}
 
@@ -148,7 +148,12 @@ func (c *Collector) mergeDevice(now time.Time, status *source.LocalStatus, e *po
 		}
 		d.ClientVersion = ad.ClientVersion
 		d.UpdateAvailable = ad.UpdateAvailable
-		d.Authorized = ad.Authorized
+		if lp == nil {
+			// The API row is a cache refreshed every APIInterval; it must
+			// not de-authorize a node the netmap proves was admitted (for
+			// example right after an admin authorized it).
+			d.Authorized = ad.Authorized
+		}
 		if d.KeyExpiry == nil && ad.Expires != nil && !ad.Expires.IsZero() {
 			t := *ad.Expires
 			d.KeyExpiry = &t
@@ -238,7 +243,10 @@ func (c *Collector) mergeDevice(now time.Time, status *source.LocalStatus, e *po
 			d.Connectivity.Path = model.PathNone
 		}
 		if prev != nil {
-			if prev.Connectivity.LatencyMs != nil {
+			// The last measured latency is carried between pings only while
+			// the device stays online; LastPing is kept for display. A
+			// failed scheduled ping clears it again in PollOnce.
+			if prev.Connectivity.LatencyMs != nil && d.Online {
 				v := *prev.Connectivity.LatencyMs
 				d.Connectivity.LatencyMs = &v
 			}
@@ -338,13 +346,14 @@ func (c *Collector) finishUptime(now time.Time, prev *model.Device, d *model.Dev
 }
 
 // markRemoved turns a device that vanished from every source into an
-// offline row without a path, agent data or metrics.
+// offline row without a path, latency, agent data or metrics.
 func (c *Collector) markRemoved(now time.Time, d *model.Device) {
 	d.Online = false
 	d.Active = false
 	d.Connectivity.Path = model.PathNone
 	d.Connectivity.Relay = ""
 	d.Connectivity.CurAddr = ""
+	d.Connectivity.LatencyMs = nil
 	d.Connectivity.RxRate = 0
 	d.Connectivity.TxRate = 0
 	d.Metrics = nil

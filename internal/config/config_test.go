@@ -33,6 +33,7 @@ func TestLoadDefaults(t *testing.T) {
 	want := &Config{
 		Listen:           ListenAuto,
 		DataDir:          DefaultDataDir,
+		AllowedHosts:     []string{},
 		Admins:           []string{},
 		AdminTags:        []string{},
 		Viewers:          []string{"*"},
@@ -496,6 +497,51 @@ func TestIsLoopbackListen(t *testing.T) {
 	for _, tc := range tests {
 		if got := IsLoopbackListen(tc.in); got != tc.want {
 			t.Errorf("IsLoopbackListen(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestAllowedHosts(t *testing.T) {
+	cfg := mustLoad(t, []string{"--allowed-hosts", "Hub.Example.COM., hub.example.com:8443,[FD7A::1]:8484", "--allowed-hosts", "hub.example.com"}, nil)
+	want := []string{"hub.example.com", "hub.example.com:8443", "[fd7a::1]:8484"}
+	if !reflect.DeepEqual(cfg.AllowedHosts, want) {
+		t.Errorf("AllowedHosts = %v, want %v", cfg.AllowedHosts, want)
+	}
+	for _, bad := range []string{"http://hub", "hub/api", "hub:0", "hub:99999", "fd7a::1:8484", "[fd7a::1", ":8484"} {
+		if _, err := Load([]string{"--allowed-hosts", bad}, env(nil)); err == nil {
+			t.Errorf("--allowed-hosts %q accepted", bad)
+		}
+	}
+}
+
+func TestSplitHostOptionalPort(t *testing.T) {
+	tests := []struct {
+		in         string
+		host, port string
+		ok         bool
+	}{
+		{"hub", "hub", "", true},
+		{"hub:8484", "hub", "8484", true},
+		{"100.64.0.1", "100.64.0.1", "", true},
+		{"[fd7a::1]", "fd7a::1", "", true},
+		{"[fd7a::1]:443", "fd7a::1", "443", true},
+		{"", "", "", false},
+		{"[fd7a::1]x", "", "", false},
+		{"[nope]", "", "", false},
+		{"hub:abc", "", "", false},
+		{"a:b:c", "", "", false},
+	}
+	for _, tc := range tests {
+		host, port, err := SplitHostOptionalPort(tc.in)
+		if (err == nil) != tc.ok || host != tc.host || port != tc.port {
+			t.Errorf("SplitHostOptionalPort(%q) = %q, %q, %v; want %q, %q, ok=%v", tc.in, host, port, err, tc.host, tc.port, tc.ok)
+		}
+	}
+	for in, want := range map[string]string{
+		"HUB.Tail.TS.Net.": "hub.tail.ts.net", "Hub:8484": "hub:8484", "[FD7A:0:0::1]:1": "[fd7a::1]:1", "[::ffff:127.0.0.1]": "[::ffff:127.0.0.1]",
+	} {
+		if got := NormalizeHost(in); got != want {
+			t.Errorf("NormalizeHost(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

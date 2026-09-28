@@ -2,6 +2,7 @@ import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { formatCompact } from '../../lib/format'
+import { useScrollFade } from '../../lib/useScrollFade'
 
 export interface TabItem<T extends string = string> {
   id: T
@@ -26,6 +27,8 @@ export interface TabsProps<T extends string = string> {
 /** Roving-tabindex tablist; arrow keys move, Home/End jump. */
 export function Tabs<T extends string = string>({ tabs, value, onValueChange, variant = 'underline', size = 'md', className, idPrefix = 'tab', ...aria }: TabsProps<T>) {
   const listRef = useRef<HTMLDivElement>(null)
+  // The scrollbar is hidden, so fade the clipped edge to show there is more to scroll to.
+  const fade = useScrollFade(listRef)
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const enabled = tabs.filter((t) => !t.disabled)
     const idx = enabled.findIndex((t) => t.id === value)
@@ -47,6 +50,7 @@ export function Tabs<T extends string = string>({ tabs, value, onValueChange, va
       role="tablist"
       aria-label={aria['aria-label']}
       onKeyDown={onKeyDown}
+      style={fade}
       className={cn(
         'flex max-w-full items-center overflow-x-auto scrollbar-none',
         variant === 'underline' ? 'gap-1 border-b border-border' : 'gap-1 rounded-lg bg-surface-inset p-1',
@@ -82,7 +86,7 @@ export function Tabs<T extends string = string>({ tabs, value, onValueChange, va
           >
             {Icon ? <Icon className="size-4" aria-hidden="true" /> : null}
             {t.label}
-            {typeof t.count === 'number' ? (
+            {typeof t.count === 'number' && t.count > 0 ? (
               <span className={cn('rounded-md px-1.5 py-0.5 text-[11px] leading-none num', selected ? 'bg-accent-soft text-accent-text' : 'bg-surface-inset text-fg-muted')}>
                 {formatCompact(t.count)}
               </span>

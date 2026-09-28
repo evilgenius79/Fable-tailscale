@@ -66,6 +66,17 @@ type Source interface {
 	Hub() model.HubInfo
 }
 
+// RemovalSource is optionally implemented by a Source that keeps devices
+// which vanished from every upstream source (netmap and control API) as
+// offline rows until they reappear or an admin forgets them, as the
+// collector does. The engine resolves the alerts of such a device with
+// "Device removed from the tailnet" instead of reporting it offline
+// forever.
+type RemovalSource interface {
+	// Removed reports whether the device is present only as such a row.
+	Removed(id model.DeviceID) bool
+}
+
 // Sentinel errors returned by Engine methods. Callers use errors.Is to map
 // them to HTTP status codes.
 var (
@@ -98,6 +109,14 @@ const (
 	// unreachable. After that, metric-based rules treat the device as having
 	// no metrics and their alerts resolve.
 	metricsStaleAfter = 5 * time.Minute
+	// latencyStaleAfter is how old the last successful disco ping may be
+	// for its latency to still drive the high_latency rule. The collector
+	// drops the latency itself when a scheduled ping fails or the device
+	// goes offline; this bound ages out a value nothing refreshes any more
+	// (a manual ping with scheduled pings disabled). It exceeds twice the
+	// longest configurable ping interval (1h) so scheduled pings never make
+	// an alert flap.
+	latencyStaleAfter = 2*time.Hour + 5*time.Minute
 	// diskCriticalPercent is the disk usage at or above which a disk_full
 	// alert is escalated to critical regardless of the rule's severity.
 	diskCriticalPercent = 97.0

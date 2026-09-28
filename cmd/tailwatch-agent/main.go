@@ -87,7 +87,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		Version: version.Version,
 		Policy:  pol,
 		WhoIs:   local,
-		Owner:   state.ownerLogin,
+		Local:   state.identity,
 		Reports: sampler,
 		Log:     log,
 	})
@@ -177,8 +177,8 @@ func newLogger(level string, asJSON bool, w io.Writer) *slog.Logger {
 }
 
 // localState caches the local tailscaled status for statusCacheTTL and
-// derives the two things the agent needs from it: the node owner's login
-// (for the default WhoIs policy) and the TailscaleInfo section of reports.
+// derives what the agent needs from it: the node owner's login and MagicDNS
+// suffix (for the WhoIs policy) and the TailscaleInfo section of reports.
 type localState struct {
 	src statusSource
 	ttl time.Duration
@@ -239,17 +239,23 @@ func (l *localState) fetch(ctx context.Context) (*source.LocalStatus, error) {
 	return st, nil
 }
 
-// ownerLogin returns this node's owner login, or "" when unknown or when
-// the node is tagged.
-func (l *localState) ownerLogin(ctx context.Context) string {
+// identity returns this node's owner login ("" when unknown or when the
+// node is tagged) and the local MagicDNS suffix ("" when unknown).
+func (l *localState) identity(ctx context.Context) localIdentity {
 	ctx, cancel := context.WithTimeout(ctx, whoisRequestTimeout)
 	defer cancel()
 	st, err := l.status(ctx)
 	if err != nil {
-		l.log.DebugContext(ctx, "owner login unavailable", "err", err)
-		return ""
+		l.log.DebugContext(ctx, "local identity unavailable", "err", err)
+		return localIdentity{}
 	}
-	return st.Self.UserLogin
+	return localIdentity{Owner: st.Self.UserLogin, MagicDNSSuffix: st.MagicDNSSuffix}
+}
+
+// ownerLogin returns this node's owner login, or "" when unknown or when
+// the node is tagged.
+func (l *localState) ownerLogin(ctx context.Context) string {
+	return l.identity(ctx).Owner
 }
 
 // tailscaleInfo builds the report's Tailscale section from a fresh daemon

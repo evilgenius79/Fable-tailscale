@@ -167,11 +167,33 @@ func TestConditions(t *testing.T) {
 			device: func() model.Device {
 				d := dev("x", "vm", true)
 				d.Connectivity.LatencyMs = fp(312.4)
+				d.Connectivity.LastPing = tp(now.Add(-30 * time.Second))
 				return d
 			},
 			ec:         evalContext{since: base.Add(-5 * time.Minute)},
 			wantActive: true, wantSev: model.SeverityWarning, wantValue: fp(312.4),
 			wantMsg: "Latency at 312ms for 5m (threshold 250ms)",
+		},
+		{
+			name: "latency nothing refreshed for hours is inactive",
+			rule: rule(model.RuleHighLatency, 250, 300),
+			device: func() model.Device {
+				d := dev("x", "vm", true)
+				d.Connectivity.LatencyMs = fp(900)
+				d.Connectivity.LastPing = tp(now.Add(-latencyStaleAfter - time.Second))
+				return d
+			},
+			wantActive: false, wantMsg: "Device offline or latency no longer measured",
+		},
+		{
+			name: "latency without a ping time is inactive",
+			rule: rule(model.RuleHighLatency, 250, 300),
+			device: func() model.Device {
+				d := dev("x", "vm", true)
+				d.Connectivity.LatencyMs = fp(900)
+				return d
+			},
+			wantActive: false,
 		},
 		{
 			name: "latency of an offline device is inactive",

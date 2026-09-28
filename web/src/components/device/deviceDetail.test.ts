@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Device, SeriesPoint, UptimeReport } from '../../api/types'
 import {
   agentInstallCommand,
+  pingResultToast,
   derpRows,
   deviceBadges,
   interfaceRows,
@@ -53,6 +54,22 @@ const baseDevice = (over: Partial<Device> = {}): Device =>
     uptime: {},
     ...over,
   }) as Device
+
+describe('pingResultToast', () => {
+  const dev = { id: 'n1', name: 'alice-mbp' }
+  it('keys the toast per device and summarises a successful ping', () => {
+    const t = pingResultToast(dev, { deviceId: 'n1', ip: '100.64.0.4', latencyMs: 12.3, path: 'relay', relay: 'fra', endpoint: '1.2.3.4:41641', at: '2026-09-28T12:00:00Z' })
+    expect(t.id).toBe('ping-n1')
+    expect(t.tone).toBe('success')
+    expect(t.title).toBe('Ping · alice-mbp')
+    expect(t.description).toContain('1.2.3.4:41641')
+    expect(t.description).toContain('fra')
+  })
+  it('reports failures with the error text', () => {
+    const t = pingResultToast(dev, { deviceId: 'n1', ip: '100.64.0.4', latencyMs: 0, path: 'unknown', error: 'timeout', at: '2026-09-28T12:00:00Z' })
+    expect(t).toMatchObject({ id: 'ping-n1', tone: 'error', description: 'timeout' })
+  })
+})
 
 describe('tag validation', () => {
   it('normalises input to tag:name', () => {

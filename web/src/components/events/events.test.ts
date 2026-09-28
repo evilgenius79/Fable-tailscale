@@ -4,6 +4,7 @@ import {
   ALL_EVENT_TYPES,
   DEFAULT_EVENT_FILTERS,
   EVENT_GROUPS,
+  beforeCursor,
   countActiveEventFilters,
   eventGroupOf,
   eventQueryParams,
@@ -68,10 +69,16 @@ describe('filters ↔ URL', () => {
 
 describe('server params', () => {
   const now = Date.parse('2026-09-28T12:00:00Z')
-  it('passes a single type through and keeps multiple client-side', () => {
+  it('sends every selected type as a comma-separated list', () => {
     expect(eventQueryParams({ ...DEFAULT_EVENT_FILTERS, types: ['hub.error'] }, 100, now)).toEqual({ limit: 100, type: 'hub.error', since: '2026-09-27T12:00:00.000Z' })
-    expect(eventQueryParams({ ...DEFAULT_EVENT_FILTERS, types: ['hub.error', 'hub.started'], since: 'all' }, 50, now)).toEqual({ limit: 50 })
+    expect(eventQueryParams({ ...DEFAULT_EVENT_FILTERS, types: ['hub.error', 'hub.started'], since: 'all' }, 50, now)).toEqual({ limit: 50, type: 'hub.error,hub.started' })
+    expect(eventQueryParams({ ...DEFAULT_EVENT_FILTERS, types: [], since: 'all' }, 50, now)).toEqual({ limit: 50 })
     expect(eventQueryParams({ ...DEFAULT_EVENT_FILTERS, device: 'd1', since: '1h' }, 100, now).device).toBe('d1')
+  })
+  it('makes the before cursor inclusive of the oldest second', () => {
+    // The hub stores second-resolution timestamps and `before` is exclusive.
+    expect(beforeCursor('2026-09-28T09:28:04Z')).toBe('2026-09-28T09:28:05.000Z')
+    expect(beforeCursor('not a date')).toBe('not a date')
   })
   it('computes since bounds', () => {
     expect(sinceISO('1h', now)).toBe('2026-09-28T11:00:00.000Z')

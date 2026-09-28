@@ -5,6 +5,10 @@
  * hashed build assets (immutable, cache-first) and the HTML shell
  * (network-first with an offline fallback). API and SSE requests are never
  * touched, so live data is always fetched from the hub.
+ *
+ * VERSION is rewritten at build time (vite.config.ts, `swVersion`) so every
+ * release gets its own caches and the previous release's are deleted on
+ * activate; the literal below is the dev / marker value.
  */
 const VERSION = 'tailwatch-sw-v1'
 const ASSET_CACHE = `${VERSION}-assets`

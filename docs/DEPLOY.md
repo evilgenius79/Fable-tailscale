@@ -62,18 +62,26 @@ What the unit gives you:
   live in one root-only file; `TAILWATCH_OPTS` adds arbitrary flags;
 * `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`,
   `NoNewPrivileges`, empty `CapabilityBoundingSet`, `MemoryDenyWriteExecute`,
-  `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK`,
+  `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX` (no netlink: the hub
+  asks `tailscaled` for its IP instead of enumerating interfaces),
   `SystemCallFilter=@system-service` minus `@privileged @resources`,
   `RestrictNamespaces`, `LockPersonality`, `ProtectKernel*`, `ProtectClock`,
   `ProtectHostname`, `ProtectProc=invisible`, `UMask=0077`;
 * `Restart=on-failure`, `Requires=tailscaled.service`;
-* `systemd-analyze security tailwatch.service` scores it "OK" (≈1.3).
+* `systemd-analyze security tailwatch.service` scores it "OK" (≈1.2).
 
-### Disco pings need write access to tailscaled
+### Disco pings and tailscaled permissions
 
 The hub measures latency with LocalAPI disco pings. On Linux `tailscaled`
-lets any local user *read* (status, WhoIs) but only root or the configured
-**operator** *write* (ping). Either:
+serves status, WhoIs **and** the ping endpoint to every local user that can
+connect to its socket (world-connectable by default; verified against
+tailscaled 1.102, whose ping handler has no write gate). The unprivileged
+`tailwatch` user therefore needs **no operator rights**, and you should not
+grant them: an operator can also run `tailscale up/down/logout`, switch exit
+nodes and change routes, which a read-only dashboard has no business doing.
+
+Only if your `tailscaled` build denies pings (the hub log shows permission
+errors from `ping` while status works), either
 
 ```sh
 sudo tailscale set --operator=tailwatch     # once; survives restarts
@@ -138,13 +146,19 @@ userspace networking cannot do that.
   `curl -fsS http://$(tailscale ip -4):8484/healthz` (host mode) or from
   another container in the same namespace. `/healthz` needs no auth and
   returns only `ok`.
-* **Pings** need write access to tailscaled; the container user has none.
-  Set `TAILWATCH_PING_INTERVAL=0` (the sidecar variant does), or in variant A
-  create a host user with uid 65532 and make it the operator.
+* **Pings** work with the plain socket access the container user (uid 65532)
+  has: `tailscaled` serves the ping endpoint to read-only clients (see
+  [Disco pings](#disco-pings-and-tailscaled-permissions)). Set
+  `TAILWATCH_PING_INTERVAL=0` only if your `tailscaled` denies them.
 * **Bind mounts** for `/data` must be owned by `65532:65532`.
 * **Images are signed**: verify with
-  `gh attestation verify oci://ghcr.io/evilgenius79/tailwatch:vX.Y.Z --owner evilgenius79`.
-* Logs go to stdout as JSON (`TAILWATCH_LOG_JSON=true` is set in the image).
+  `gh attestation verify oci://ghcr.io/evilgenius79/tailwatch:X.Y.Z --owner evilgenius79`
+  (image tags carry no `v` prefix: a release `v1.2.3` is published as `1.2.3`,
+  `1.2` and `latest`).
+* Logs go to **stderr** as JSON (`docker logs` shows them;
+  `TAILWATCH_LOG_JSON=true` is set in the image). Stdout only ever carries
+  `--help` / `--version` output, so redirect `2>&1` when running the binary
+  by hand.
 
 ## Tailscale ACL
 
@@ -217,9 +231,13 @@ TAILWATCH_ADMINS=you@example.com        # who may run them
 A personal API key (`TS_API_KEY=tskey-api-…`) works too but expires after 90
 days and carries the full rights of your account — prefer the OAuth client.
 
-Admin actions are off unless **both** `--enable-admin-actions` and a
-credential are set; every action (success or failure) is recorded in the audit
-log (`/api/v1/audit`, admin-only) and as an `admin.action` event.
+Admin actions are off by default. `--enable-admin-actions` turns them on and
+**requires** a credential: the hub refuses to start (`config: ... requires
+control API credentials`, exit 2) when the flag is set without `TS_API_KEY`
+or `TS_OAUTH_CLIENT_ID`/`TS_OAUTH_CLIENT_SECRET`, so add the credential to
+`hub.env` before (or together with) `TAILWATCH_ENABLE_ADMIN_ACTIONS=true`.
+Every action (success or failure) is recorded in the audit log
+(`/api/v1/audit`, admin-only) and as an `admin.action` event.
 
 ## TLS with `tailscale cert`
 
@@ -290,7 +308,10 @@ copy, or stop the service and copy the files. Nothing secret is stored there.
 ## Sizing
 
 Per device the hub stores one raw sample per poll (15s default, kept 48h) and
-one 5-minute rollup row (kept 90 days). 100 devices ≈ 60 MB of raw rows and a
-few MB of rollups; hourly rollup/prune keeps it flat. CPU is negligible;
+one 5-minute rollup row (kept 90 days). A raw sample costs ≈ 140 bytes on
+disk including indexes (measured on the demo hub: 13.7 MB for 98k samples),
+so 100 devices ≈ 1.15 M samples ≈ 150–200 MB of SQLite at 15s / 48h, plus a
+few MB of WAL and rollups; hourly rollup/prune keeps it flat. Halve it with
+`--poll-interval 30s` or a shorter `--raw-retention`. CPU is negligible;
 memory is dominated by SQLite caches (tens of MB). Fewer devices / longer
 `--poll-interval` scale it down for a Raspberry Pi.

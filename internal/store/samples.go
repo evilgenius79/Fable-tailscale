@@ -167,6 +167,13 @@ func planSeries(rng time.Duration) seriesPlan {
 // (see planSeries). Bucketed points start at floor(ts/step)*step; averages
 // ignore null values; Online and Direct are ratios in 0..1. Points are sorted
 // by time and the slice is never nil.
+//
+// A rollup-sourced series also covers the newest part of the range that has
+// not been rolled up yet (rollups lag behind by at least an hour): raw
+// samples at or after the device's rollup boundary (see rollupBoundary) are
+// aggregated into 5-minute buckets on the fly and re-bucketed to the step
+// together with the stored rollups, so the series always extends to the
+// newest sample.
 func (s *Store) QuerySeries(ctx context.Context, id model.DeviceID, from, to time.Time) (*model.Series, error) {
 	plan := planSeries(to.Sub(from))
 	out := &model.Series{
@@ -198,8 +205,15 @@ func (s *Store) QuerySeries(ctx context.Context, id model.DeviceID, from, to tim
 			FROM samples WHERE device_id = ?2 AND ts >= ?3 AND ts <= ?4
 			GROUP BY bucket ORDER BY bucket`, plan.step, string(id), fromU, toU)
 	default:
-		// Re-bucket 300s rollups to the requested step, weighting each
-		// average by the number of raw samples behind it.
+		// Stored rollups serve the range up to the device's rollup boundary;
+		// raw samples from the boundary on are aggregated into 300s buckets
+		// of the same shape. Both are then re-bucketed to the requested
+		// step, weighting each average by the number of raw samples behind
+		// it. The two halves are disjoint so no sample is counted twice.
+		boundary, berr := s.rollupBoundary(ctx, id, fromU)
+		if berr != nil {
+			return nil, fmt.Errorf("store: query series %s: %w", id, berr)
+		}
 		rows, err = s.db.QueryContext(ctx, `SELECT (bucket / ?1) * ?1 AS b, SUM(samples),
 			SUM(online_ratio * samples) / SUM(samples),
 			`+weightedAvg("direct_ratio")+`, `+weightedAvg("latency_avg")+`, MAX(latency_max),
@@ -207,8 +221,19 @@ func (s *Store) QuerySeries(ctx context.Context, id model.DeviceID, from, to tim
 			`+weightedAvg("cpu_avg")+`, MAX(cpu_max), `+weightedAvg("mem_avg")+`, `+weightedAvg("disk_avg")+`,
 			`+weightedAvg("load1_avg")+`, `+weightedAvg("net_rx_rate_avg")+`, `+weightedAvg("net_tx_rate_avg")+`,
 			`+weightedAvg("temp_avg")+`
-			FROM rollups WHERE device_id = ?2 AND bucket >= ?3 AND bucket <= ?4
-			GROUP BY b ORDER BY b`, plan.step, string(id), fromU, toU)
+			FROM (
+				SELECT bucket, samples, online_ratio, direct_ratio, latency_avg, latency_max,
+					ts_rx_rate_avg, ts_tx_rate_avg, cpu_avg, cpu_max, mem_avg, disk_avg, load1_avg,
+					net_rx_rate_avg, net_tx_rate_avg, temp_avg
+				FROM rollups WHERE device_id = ?2 AND bucket >= ?3 AND bucket <= ?4 AND bucket < ?5
+				UNION ALL
+				SELECT (ts / ?6) * ?6 AS bucket, COUNT(*), AVG(online), AVG(direct), AVG(latency_ms), MAX(latency_ms),
+					AVG(ts_rx_rate), AVG(ts_tx_rate), AVG(cpu), MAX(cpu), AVG(mem), AVG(disk), AVG(load1),
+					AVG(net_rx_rate), AVG(net_tx_rate), AVG(temp_c)
+				FROM samples WHERE device_id = ?2 AND ts >= MAX(?3, ?5) AND ts <= ?4
+				GROUP BY bucket
+			)
+			GROUP BY b ORDER BY b`, plan.step, string(id), fromU, toU, boundary, rollupStepSec)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("store: query series %s: %w", id, err)
@@ -249,6 +274,34 @@ func (s *Store) QuerySeries(ctx context.Context, id model.DeviceID, from, to tim
 		return nil, fmt.Errorf("store: query series %s: %w", id, err)
 	}
 	return out, nil
+}
+
+// rollupBoundary returns the unix second from which raw samples, rather than
+// stored rollups, serve a rollup-sourced series for a device: the earlier of
+// the global rollup watermark (the start of the bucket Rollup will recompute
+// next, see Rollup) and the end of the device's newest rollup bucket. Rollups
+// strictly before the boundary are complete; every sample at or after it is
+// still raw. from is returned when the device has no rollups at all, so the
+// whole range is served from raw samples.
+func (s *Store) rollupBoundary(ctx context.Context, id model.DeviceID, from int64) (int64, error) {
+	var newest int64
+	err := s.db.QueryRowContext(ctx, `SELECT bucket + step FROM rollups WHERE device_id = ? ORDER BY bucket DESC LIMIT 1`, string(id)).Scan(&newest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return from, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("rollup boundary: %w", err)
+	}
+	wm, ok, err := s.GetKV(ctx, kvRollupWatermark)
+	if err != nil {
+		return 0, fmt.Errorf("rollup boundary: %w", err)
+	}
+	if ok {
+		if parsed, err := strconv.ParseInt(wm, 10, 64); err == nil && parsed >= 0 && parsed < newest {
+			newest = parsed
+		}
+	}
+	return newest, nil
 }
 
 // weightedAvg returns the SQL for a samples-weighted average of a nullable
@@ -360,17 +413,19 @@ func (s *Store) Rollup(ctx context.Context, olderThan time.Time) (int, error) {
 	end := olderThan.Unix()
 	var written int64
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		var start int64
-		if v, ok, err := getKVTx(ctx, tx, kvRollupWatermark); err != nil {
+		start, _, err := s.rollupWatermarkTx(ctx, tx)
+		if err != nil {
 			return fmt.Errorf("store: rollup: read watermark: %w", err)
-		} else if ok {
-			if parsed, err := strconv.ParseInt(v, 10, 64); err != nil {
-				s.log.Warn("store: rollup: ignoring malformed watermark", "value", v)
-			} else {
-				start = parsed
-			}
 		}
-		if start < 0 {
+		if start > end {
+			// The clock went backwards since the watermark was written (a
+			// restored snapshot, an RTC corrected by NTP). Waiting for real
+			// time to catch up would leave every sample until then un-rolled
+			// while Prune keeps deleting them, so rescan from the beginning;
+			// the ON CONFLICT guard keeps the existing rollups intact and
+			// the corrected watermark is written below.
+			s.log.Warn("store: rollup: watermark is ahead of the rollup horizon; rescanning all samples",
+				"watermark", time.Unix(start, 0).UTC().Format(time.RFC3339), "older_than", olderThan.UTC().Format(time.RFC3339))
 			start = 0
 		}
 		if end <= start {
@@ -401,6 +456,8 @@ func (s *Store) Rollup(ctx context.Context, olderThan time.Time) (int, error) {
 		}
 		// The last bucket may be partial (end is rarely bucket-aligned), so
 		// the watermark points at its start and it is recomputed next time.
+		// Prune never deletes samples at or after the watermark, so the
+		// recomputation always sees the whole bucket.
 		watermark := (end / rollupStepSec) * rollupStepSec
 		if watermark > start {
 			if err := setKVTx(ctx, tx, kvRollupWatermark, strconv.FormatInt(watermark, 10)); err != nil {
@@ -421,8 +478,11 @@ func (s *Store) Rollup(ctx context.Context, olderThan time.Time) (int, error) {
 // Prune deletes raw samples older than now-rawRetention, rollups older than
 // now-rollupRetention, and events and resolved alerts older than
 // now-eventRetention. A retention <= 0 disables pruning for that category.
-// When more than 100k rows were removed the database is compacted with
-// VACUUM (failures are logged, not returned).
+// Raw samples at or after the rollup watermark are kept regardless of
+// retention: they have not been (completely) rolled up yet, and deleting them
+// would leave the next Rollup with a fraction of a bucket. When more than
+// 100k rows were removed the database is compacted with VACUUM (failures are
+// logged, not returned).
 func (s *Store) Prune(ctx context.Context, rawRetention, rollupRetention, eventRetention time.Duration) (PruneResult, error) {
 	now := s.now()
 	var res PruneResult
@@ -442,8 +502,20 @@ func (s *Store) Prune(ctx context.Context, rawRetention, rollupRetention, eventR
 			*dst = n
 			return nil
 		}
-		if err := del(&res.Samples, `DELETE FROM samples WHERE ts < ?`, rawRetention); err != nil {
-			return fmt.Errorf("store: prune samples: %w", err)
+		if rawRetention > 0 {
+			cutoff := now.Add(-rawRetention).Unix()
+			if wm, ok, err := s.rollupWatermarkTx(ctx, tx); err != nil {
+				return fmt.Errorf("store: prune samples: %w", err)
+			} else if ok && wm < cutoff {
+				cutoff = wm
+			}
+			r, err := tx.ExecContext(ctx, `DELETE FROM samples WHERE ts < ?`, cutoff)
+			if err != nil {
+				return fmt.Errorf("store: prune samples: %w", err)
+			}
+			if res.Samples, err = r.RowsAffected(); err != nil {
+				return fmt.Errorf("store: prune samples: %w", err)
+			}
 		}
 		if err := del(&res.Rollups, `DELETE FROM rollups WHERE bucket < ?`, rollupRetention); err != nil {
 			return fmt.Errorf("store: prune rollups: %w", err)
@@ -466,6 +538,25 @@ func (s *Store) Prune(ctx context.Context, rawRetention, rollupRetention, eventR
 		s.vacuum(ctx)
 	}
 	return res, nil
+}
+
+// rollupWatermarkTx reads the rollup watermark inside tx. ok is false when no
+// watermark is stored or the stored value is malformed (the latter is logged
+// and otherwise ignored). A negative value is clamped to 0.
+func (s *Store) rollupWatermarkTx(ctx context.Context, tx *sql.Tx) (wm int64, ok bool, err error) {
+	v, ok, err := getKVTx(ctx, tx, kvRollupWatermark)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	parsed, perr := strconv.ParseInt(v, 10, 64)
+	if perr != nil {
+		s.log.Warn("store: ignoring malformed rollup watermark", "value", v)
+		return 0, false, nil
+	}
+	if parsed < 0 {
+		parsed = 0
+	}
+	return parsed, true, nil
 }
 
 // vacuum compacts the database file. It holds the write mutex so no writer

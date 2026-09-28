@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Bell, Compass, History, LayoutDashboard, Server, Waypoints } from 'lucide-react'
 import { isApiError } from '../api/client'
 import { useDevice, useIsAdmin, useSeries, useSettings, useUptime } from '../api/hooks'
@@ -90,6 +90,16 @@ export default function DeviceDetailPage() {
   const device = detail?.device
   useDocumentTitle(device?.name ?? 'Device')
 
+  // The hub resolves `/devices/{id}` by id or name, but live updates (SSE
+  // tick/event/alert) and the series/uptime/events caches are keyed by node id.
+  // A page opened by name would go stale between refetches, so canonicalise
+  // the URL to the id as soon as the detail loads.
+  const navigate = useNavigate()
+  const canonicalId = device?.id
+  useEffect(() => {
+    if (canonicalId && canonicalId !== id) navigate({ pathname: `/devices/${encodeURIComponent(canonicalId)}`, search: params.toString() ? `?${params.toString()}` : '' }, { replace: true })
+  }, [canonicalId, id, params, navigate])
+
   const canManage = isAdmin && !!settings.data?.adminActionsEnabled
   const agentPort = settings.data?.agentPort ?? 41820
   const agentEnabled = settings.data?.agentEnabled ?? true
@@ -146,7 +156,8 @@ export default function DeviceDetailPage() {
         compact
       >
         <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
-          <Tabs tabs={tabs} value={tab} onValueChange={setTab} aria-label="Device sections" idPrefix="device-tab" className="min-w-0 flex-1" />
+          {/* No flex-1/min-w-0 here: the strip keeps its intrinsic width so the picker wraps below it instead of squeezing the tabs. */}
+          <Tabs tabs={tabs} value={tab} onValueChange={setTab} aria-label="Device sections" idPrefix="device-tab" />
           {tab === 'overview' ? (
             <div className="pb-1.5">
               <TimeRangePicker value={range} onValueChange={setRange} options={RANGE_OPTIONS} aria-label="Chart time range" />

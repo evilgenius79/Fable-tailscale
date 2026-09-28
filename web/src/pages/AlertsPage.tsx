@@ -10,7 +10,7 @@ import { RuleEditorDialog } from '../components/alerts/RuleEditorDialog'
 import { RuleTypeGuide } from '../components/alerts/RuleTypeGuide'
 import { RulesTable } from '../components/alerts/RulesTable'
 import { TestNotificationDialog } from '../components/alerts/TestNotificationDialog'
-import { DEFAULT_ALERT_FILTERS, alertDeviceOptions, filterAlerts, groupOpenAlerts, groupResolvedAlerts, hasAlertFilters, type AlertFilters, type SeverityFilter } from '../components/alerts/alerts'
+import { DEFAULT_ALERT_FILTERS, alertDeviceOptions, alertFiltersFromSearch, filterAlerts, groupOpenAlerts, groupResolvedAlerts, hasAlertFilters, type AlertFilters } from '../components/alerts/alerts'
 import { useRuleSave } from '../components/alerts/useRuleSave'
 import { Button, buttonClass } from '../components/ui/Button'
 import { PageHeader } from '../components/ui/PageHeader'
@@ -48,22 +48,33 @@ export default function AlertsPage() {
   const ack = useAckAlert()
   const { saveRule, pendingId } = useRuleSave()
 
-  const [filters, setFilters] = useState<AlertFilters>(DEFAULT_ALERT_FILTERS)
+  const [filters, setFilters] = useState<AlertFilters>(() => alertFiltersFromSearch(sp))
   const patchFilters = useCallback((p: Partial<AlertFilters>) => setFilters((f) => ({ ...f, ...p })), [])
   const resetFilters = useCallback(() => setFilters((f) => ({ ...DEFAULT_ALERT_FILTERS, q: f.q })), [])
 
-  // Severity from the query string (e.g. deep links from the overview).
+  // Deep links (`?severity=` from the overview KPIs, `?device=` from a device's
+  // "Alert history"). Keyed on the parameter values, not the params object, so
+  // tab / rule-editor navigation (which copies the query string) does not
+  // re-apply a filter the user has since cleared.
+  const severityParam = sp.get('severity')
+  const deviceParam = sp.get('device')
   useEffect(() => {
-    const sev = sp.get('severity')
-    if (sev === 'critical' || sev === 'warning' || sev === 'info') setFilters((f) => ({ ...f, severity: sev as SeverityFilter }))
-  }, [sp])
+    setFilters((f) => alertFiltersFromSearch(new URLSearchParams({ ...(severityParam ? { severity: severityParam } : {}), ...(deviceParam ? { device: deviceParam } : {}) }), f))
+  }, [severityParam, deviceParam])
 
   const source = tab === 'resolved' ? resolvedQ : openQ
   const list = useMemo(() => source.data ?? [], [source.data])
   const now = useMemo(() => Date.now(), [list])
   const filtered = useMemo(() => filterAlerts(list, filters), [list, filters])
   const groups = useMemo(() => (tab === 'resolved' ? groupResolvedAlerts(filtered, new Date(now)) : groupOpenAlerts(filtered)), [tab, filtered, now])
-  const deviceOptions = useMemo(() => alertDeviceOptions(list), [list])
+  const deviceOptions = useMemo(() => {
+    const opts = alertDeviceOptions(list)
+    // A device from the deep link that has no alert in this list still needs an option (and a name if we know it).
+    if (filters.device && !opts.some((o) => o.value === filters.device)) {
+      opts.push({ value: filters.device, label: devicesQ.data?.find((d) => d.id === filters.device)?.name ?? filters.device })
+    }
+    return opts
+  }, [list, filters.device, devicesQ.data])
   const counts = useMemo(() => {
     const out: Partial<Record<Severity, number>> = {}
     for (const a of list) out[a.severity] = (out[a.severity] ?? 0) + 1
@@ -103,7 +114,8 @@ export default function AlertsPage() {
 
   const onAck = (a: Alert) =>
     ack.mutate(a.id, {
-      onSuccess: () => toast.success('Alert acknowledged', a.title, { duration: 2500 }),
+      // Same id as the stream's toast for this alert (sse.ts) so the two replace each other instead of stacking.
+      onSuccess: () => toast.success('Alert acknowledged', a.title, { id: `alert-${a.id}`, duration: 2500 }),
     })
   const onToggle = (rule: AlertRule, patch: Pick<Partial<AlertRule>, 'enabled' | 'notify'>) =>
     saveRule(

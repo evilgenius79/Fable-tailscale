@@ -10,7 +10,7 @@ import { IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { ErrorState } from '../ui/ErrorState'
 import { Skeleton } from '../ui/Skeleton'
-import { edgePathLabel, edgeWidth, fitTransform, ringRadius, zoomAt, type Transform } from './topology'
+import { counterScale, edgePathLabel, edgeWidth, fitTransform, ringRadius, zoomAt, type Transform } from './topology'
 import { useElementSize, useForceLayout, usePrefersReducedMotion, type LayoutEdge, type LayoutNode } from './useForceLayout'
 
 export interface TopologyMapProps {
@@ -39,9 +39,12 @@ interface EdgeLayerProps {
   hovered: string | null
   showLabels: boolean
   version: number
+  /** Current zoom; relay labels are counter-scaled with it. */
+  k: number
 }
 
-const EdgeLayer = memo(function EdgeLayer({ edges, maxRate, theme, hovered, showLabels }: EdgeLayerProps) {
+const EdgeLayer = memo(function EdgeLayer({ edges, maxRate, theme, hovered, showLabels, k }: EdgeLayerProps) {
+  const inv = counterScale(k)
   return (
     <g role="presentation">
       {edges.map((l) => {
@@ -55,11 +58,10 @@ const EdgeLayer = memo(function EdgeLayer({ edges, maxRate, theme, hovered, show
         const my = (source.y + target.y) / 2
         return (
           <g key={l.id} opacity={dim ? 0.15 : none ? 0.5 : 1} style={{ transition: 'opacity 150ms' }}>
-            <line x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke={color} strokeWidth={w} strokeDasharray={relay ? '6 5' : none ? '2 4' : undefined} strokeLinecap="round" />
+            <line x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke={color} strokeWidth={w} strokeDasharray={relay ? '6 5' : none ? '2 4' : undefined} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
             {relay && edge.relay && (showLabels || hovered === target.id) ? (
               <text
-                x={mx}
-                y={my}
+                transform={`translate(${mx} ${my}) scale(${inv})`}
                 dy={3.5}
                 textAnchor="middle"
                 fontSize={9.5}
@@ -90,11 +92,13 @@ interface NodeGlyphProps {
   hovered: boolean
   dimmed: boolean
   showLabel: boolean
+  /** Current zoom; the glyph and its label are counter-scaled with it. */
+  k: number
   onHover: (id: string | null) => void
   onActivate: (id: string) => void
 }
 
-const NodeGlyph = memo(function NodeGlyph({ n, x, y, theme, hovered, dimmed, showLabel, onHover, onActivate }: NodeGlyphProps) {
+const NodeGlyph = memo(function NodeGlyph({ n, x, y, theme, hovered, dimmed, showLabel, k, onHover, onActivate }: NodeGlyphProps) {
   const d = n.node
   const Icon = osInfo(d.os).icon
   const ringColor = !d.online ? theme.status.offline : d.path === 'relay' ? theme.status.relay : d.path === 'direct' ? theme.status.online : theme.textMuted
@@ -110,7 +114,7 @@ const NodeGlyph = memo(function NodeGlyph({ n, x, y, theme, hovered, dimmed, sho
   }
   return (
     <g
-      transform={`translate(${x},${y})`}
+      transform={`translate(${x},${y}) scale(${counterScale(k)})`}
       tabIndex={0}
       role="link"
       aria-label={label}
@@ -322,10 +326,9 @@ export function TopologyMap({ nodes, edges, loading, fetching, error, onRetry, u
               <g role="presentation" aria-hidden="true">
                 {rings.map((ring) => (
                   <g key={ring.label}>
-                    <circle r={ring.r} fill="none" stroke={theme.grid} strokeWidth={1} />
+                    <circle r={ring.r} fill="none" stroke={theme.grid} strokeWidth={1} vectorEffect="non-scaling-stroke" />
                     <text
-                      x={ring.r * 0.7071 + 6}
-                      y={ring.r * 0.7071 + 6}
+                      transform={`translate(${ring.r * 0.7071 + 6} ${ring.r * 0.7071 + 6}) scale(${counterScale(transform.k)})`}
                       dy={3}
                       textAnchor="start"
                       fontSize={9}
@@ -342,10 +345,10 @@ export function TopologyMap({ nodes, edges, loading, fetching, error, onRetry, u
                   </g>
                 ))}
               </g>
-              <EdgeLayer edges={layout.edges} maxRate={maxRate} theme={theme} hovered={hovered} showLabels={showLabels} version={layout.version} />
+              <EdgeLayer edges={layout.edges} maxRate={maxRate} theme={theme} hovered={hovered} showLabels={showLabels} version={layout.version} k={transform.k} />
               <g>
                 {layout.nodes.map((n) => (
-                  <NodeGlyph key={n.id} n={n} x={n.x} y={n.y} theme={theme} hovered={hovered === n.id} dimmed={!!neighbours && !neighbours.has(n.id)} showLabel={showLabels} onHover={onHover} onActivate={activate} />
+                  <NodeGlyph key={n.id} n={n} x={n.x} y={n.y} theme={theme} hovered={hovered === n.id} dimmed={!!neighbours && !neighbours.has(n.id)} showLabel={showLabels} k={transform.k} onHover={onHover} onActivate={activate} />
                 ))}
               </g>
             </g>
@@ -358,7 +361,8 @@ export function TopologyMap({ nodes, edges, loading, fetching, error, onRetry, u
               style={(() => {
                 const sx = hoveredNode.x * transform.k + transform.x
                 const sy = hoveredNode.y * transform.k + transform.y
-                const gap = (hoveredNode.r + 12) * transform.k + 8
+                // Glyphs are counter-scaled above 1x, so on screen they only shrink with the zoom.
+                const gap = (hoveredNode.r + 12) * transform.k * counterScale(transform.k) + 8
                 // Flip below the glyph when there is no room above it (tooltip ≈ 140px tall).
                 const below = sy - gap < 150
                 return {
@@ -395,8 +399,17 @@ export function TopologyMap({ nodes, edges, loading, fetching, error, onRetry, u
                 ) : null}
                 <dt className="text-fg-muted">OS</dt>
                 <dd>{osInfo(hoveredNode.node.os).label}</dd>
-                <dt className="text-fg-muted">User</dt>
-                <dd className="truncate">{hoveredNode.node.user}</dd>
+                {hoveredNode.node.user ? (
+                  <>
+                    <dt className="text-fg-muted">User</dt>
+                    <dd className="truncate">{hoveredNode.node.user}</dd>
+                  </>
+                ) : hoveredNode.node.tags.length ? (
+                  <>
+                    <dt className="text-fg-muted">Tags</dt>
+                    <dd className="truncate">{hoveredNode.node.tags.join(', ')}</dd>
+                  </>
+                ) : null}
               </dl>
             </div>
           ) : null}

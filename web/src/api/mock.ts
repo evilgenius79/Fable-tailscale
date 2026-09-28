@@ -128,7 +128,11 @@ async function route(method: string, path: string, params: URLSearchParams, init
     const device = params.get('device')
     const since = params.get('since')
     let list = state.events
-    if (type) list = list.filter((e) => e.type === type)
+    // Like the hub, `type` is a comma-separated list.
+    if (type) {
+      const types = type.split(',')
+      list = list.filter((e) => types.includes(e.type))
+    }
     if (device) {
       const p = findProfile(device)
       list = list.filter((e) => e.deviceId === (p?.id ?? device))
@@ -179,7 +183,7 @@ async function route(method: string, path: string, params: URLSearchParams, init
     if (typeof body.threshold !== 'number' || body.threshold < 0) return err('bad_request', 'threshold must be a non-negative number', 400)
     const next: AlertRule = { ...cur, ...body, id, type: cur.type, updatedAt: new Date().toISOString() }
     state.rules[idx] = next
-    audit(actor, 'rule.save', id, { enabled: next.enabled, threshold: next.threshold, forSeconds: next.forSeconds })
+    audit(actor, 'rule.update', id, { enabled: next.enabled, threshold: next.threshold, forSeconds: next.forSeconds })
     return json(next)
   }
 

@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { UseQueryResult } from '@tanstack/react-query'
-import { Activity, ArrowDown, ArrowDownUp, ArrowUp, Cpu, Gauge, HardDrive, ListTree, MemoryStick, Power, Thermometer, Timer, Waypoints } from 'lucide-react'
+import { Activity, ArrowDownUp, Cpu, Gauge, HardDrive, ListTree, MemoryStick, Power, Thermometer, Timer, Waypoints } from 'lucide-react'
 import type { Device, Series, UptimeReport } from '../../api/types'
 import { formatBitrate, formatBytes, formatDateTime, formatDuration, formatInt, formatLatency, formatLoad, formatPercent, formatRelative, formatTemp, formatUptimePct, plural } from '../../lib/format'
 import { pathLabel, pathTone, utilizationTone, type StatusTone } from '../../lib/status'
@@ -37,13 +37,6 @@ export function OverviewTab({ device, range, series, uptime, agentPort, agentEna
 
   const tiles = useMemo<StatTileProps[]>(() => {
     const p = points ?? []
-    const rx = (
-      <span className="inline-flex items-center gap-1">
-        <ArrowDown className="size-4 text-fg-muted" aria-hidden="true" />
-        <span className="sr-only">Download </span>
-        {formatBitrate(c.rxRate)}
-      </span>
-    )
     const out: StatTileProps[] = [
       {
         label: 'Uptime · 24h',
@@ -69,16 +62,9 @@ export function OverviewTab({ device, range, series, uptime, agentPort, agentEna
       },
       {
         label: 'Tailscale traffic',
-        value: device.online ? rx : '—',
-        hint: device.online ? (
-          <span className="inline-flex items-center gap-1">
-            <ArrowUp className="size-3 text-fg-muted" aria-hidden="true" />
-            <span className="sr-only">Upload </span>
-            {formatBitrate(c.txRate)}
-          </span>
-        ) : (
-          'offline'
-        ),
+        // Plain strings so the tile can ellipsize instead of cutting glyphs mid-letter.
+        value: device.online ? `↓ ${formatBitrate(c.rxRate)}` : '—',
+        hint: device.online ? `↑ ${formatBitrate(c.txRate)}` : 'offline',
         trend: trend(p, 'tsRxRate'),
         icon: ArrowDownUp,
       },
@@ -127,7 +113,7 @@ export function OverviewTab({ device, range, series, uptime, agentPort, agentEna
 
   return (
     <div className="space-y-4 xl:space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6" aria-label="Key metrics">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6" aria-label="Key metrics">
         {tiles.map((t, i) => (
           <StatTile key={i} size="sm" {...t} />
         ))}

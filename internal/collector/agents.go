@@ -149,7 +149,11 @@ func (c *Collector) applyAgent(now time.Time, e *pollEntry, prev *model.Device, 
 			URL:         url,
 		}
 		d.Metrics = prevMetrics
-		if prevAgent.State == model.AgentReachable {
+		// An agent that was reached before (also one whose state was
+		// unknown while the device was offline or the hub was down) has
+		// just become unreachable; a device that never had an agent stays
+		// quiet.
+		if prevAgent.State != model.AgentUnreachable && prevAgent.LastSuccess != nil {
 			events = append(events, newDeviceEvent(now, d, model.EventAgentUnreachable, model.SeverityInfo,
 				"Agent unreachable: "+d.Name,
 				fmt.Sprintf("Agent on %s is unreachable: %s", d.Name, errText),

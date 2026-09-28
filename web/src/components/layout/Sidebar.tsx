@@ -1,9 +1,11 @@
+import { useRef } from 'react'
 import { NavLink } from 'react-router-dom'
 import { Activity, Bell, LayoutDashboard, MonitorSmartphone, PanelLeftClose, PanelLeftOpen, Settings, Waypoints, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { formatCompact } from '../../lib/format'
-import { useOpenAlertCount } from '../../api/hooks'
+import { useOpenAlertCount, useOverview } from '../../api/hooks'
+import { useFocusTrap } from '../../lib/useFocusTrap'
 import { useUIStore } from '../../store'
 import { Tooltip } from '../ui/Tooltip'
 import { IconButton } from '../ui/Button'
@@ -80,7 +82,11 @@ export function SidebarNav({ collapsed, onNavigate }: { collapsed: boolean; onNa
 }
 
 function HubFooter({ collapsed }: { collapsed: boolean }) {
-  const hub = useUIStore((s) => s.hub)
+  const streamHub = useUIStore((s) => s.hub)
+  // The store is only fed by the SSE hello/tick; when the stream is blocked or
+  // slow, the overview (already fetched by every page) carries the same HubInfo.
+  const overview = useOverview()
+  const hub = streamHub ?? overview.data?.hub ?? null
   if (collapsed) return null
   return (
     <div className="px-4 pb-3 text-[11px] leading-4 text-fg-muted">
@@ -135,11 +141,13 @@ export function Sidebar() {
 export function MobileDrawer() {
   const open = useUIStore((s) => s.mobileNavOpen)
   const setOpen = useUIStore((s) => s.setMobileNavOpen)
+  const panelRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(panelRef, open)
   if (!open) return null
   return (
     <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
       <div className="absolute inset-0 bg-overlay animate-fade-in" onClick={() => setOpen(false)} aria-hidden="true" />
-      <div className="absolute inset-y-0 left-0 flex w-[280px] max-w-[85vw] flex-col border-r border-border bg-surface shadow-overlay animate-slide-in-left" onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}>
+      <div ref={panelRef} className="absolute inset-y-0 left-0 flex w-[280px] max-w-[85vw] flex-col border-r border-border bg-surface shadow-overlay animate-slide-in-left" onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}>
         <div className="flex h-[var(--topbar-h)] shrink-0 items-center justify-between border-b border-border pl-4 pr-2">
           <div className="flex items-center gap-2.5">
             <LogoMark />

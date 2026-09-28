@@ -119,6 +119,11 @@ type Config struct {
 	InsecureListenAny bool
 	// Socket overrides the tailscaled LocalAPI socket path ("" = default).
 	Socket string
+	// AllowedHosts are extra Host header values ("host" or "host:port",
+	// lower-cased, no trailing dot) the hub accepts in addition to its
+	// listen address, Tailscale IPs and MagicDNS name, for reverse-proxy
+	// or custom TLS names. An entry without a port matches any port.
+	AllowedHosts []string
 
 	// Admins are login names granted the admin role.
 	Admins []string
@@ -372,6 +377,7 @@ func (b *builder) define() {
 	b.boolean(server, "demo", false, "run against a simulated tailnet with authentication disabled")
 	b.boolean(server, "insecure-no-auth", false, "disable authentication (only allowed with a loopback --listen)")
 	b.boolean(server, "insecure-listen-any", false, "allow binding a non-Tailscale, non-loopback address (not recommended)")
+	b.list(server, "allowed-hosts", "", "`list` of extra Host header values (host or host:port) the hub answers to, e.g. a reverse-proxy or TLS name; the listen address, Tailscale IPs and MagicDNS name are always accepted")
 
 	access := b.group("Access control")
 	b.list(access, "admins", "", "login names granted the admin role (repeatable `list`, comma-separated)")
@@ -436,6 +442,7 @@ func (b *builder) build() *Config {
 	cfg.Demo = boolean("demo")
 	cfg.InsecureNoAuth = boolean("insecure-no-auth")
 	cfg.InsecureListenAny = boolean("insecure-listen-any")
+	cfg.AllowedHosts = normalizeList(b.lists["allowed-hosts"].vals, NormalizeHost)
 
 	cfg.Admins = normalizeList(b.lists["admins"].vals, strings.ToLower)
 	cfg.AdminTags = normalizeList(b.lists["admin-tags"].vals, strings.ToLower)
@@ -661,6 +668,11 @@ func (c *Config) Validate() error {
 	if c.InsecureNoAuth && !IsLoopbackListen(c.Listen) {
 		add("--insecure-no-auth is only allowed with a loopback --listen address such as 127.0.0.1:%d", DefaultPort)
 	}
+	for _, h := range c.AllowedHosts {
+		if _, _, err := SplitHostOptionalPort(h); err != nil {
+			add("--allowed-hosts %q: %v", h, err)
+		}
+	}
 	if c.DataDir == "" {
 		add("--data-dir must not be empty")
 	}
@@ -792,6 +804,73 @@ func SplitListen(listen string) (host string, port int, err error) {
 		return "", 0, fmt.Errorf("port %q must be between 1 and 65535", portStr)
 	}
 	return host, port, nil
+}
+
+// SplitHostOptionalPort splits "host", "host:port", "[v6]" or "[v6]:port"
+// into its host and port ("" when absent). The host must not be empty or
+// carry a scheme or path, and a port must be between 1 and 65535.
+func SplitHostOptionalPort(s string) (host, port string, err error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", "", errors.New("must not be empty")
+	}
+	if strings.ContainsAny(s, "/ \t?#@") {
+		return "", "", errors.New("must be host or host:port without a scheme or path")
+	}
+	switch {
+	case strings.HasPrefix(s, "["):
+		end := strings.IndexByte(s, ']')
+		if end < 0 {
+			return "", "", errors.New("unterminated IPv6 literal")
+		}
+		host = s[1:end]
+		rest := s[end+1:]
+		if rest != "" {
+			if !strings.HasPrefix(rest, ":") {
+				return "", "", errors.New("unexpected text after the IPv6 literal")
+			}
+			port = rest[1:]
+		}
+		if ip, perr := netip.ParseAddr(host); perr != nil || !ip.Is6() {
+			return "", "", errors.New("invalid IPv6 literal")
+		}
+	case strings.Count(s, ":") > 1:
+		return "", "", errors.New("an IPv6 literal must be bracketed, e.g. [fd7a::1]:8484")
+	default:
+		host, port, _ = strings.Cut(s, ":")
+	}
+	if host == "" {
+		return "", "", errors.New("host must not be empty")
+	}
+	if port != "" {
+		if n, perr := strconv.Atoi(port); perr != nil || n < 1 || n > 65535 {
+			return "", "", fmt.Errorf("port %q must be between 1 and 65535", port)
+		}
+	}
+	return host, port, nil
+}
+
+// NormalizeHost lower-cases a "host" or "host:port" value and strips a
+// trailing dot from the name so equal hosts compare equal. Invalid values
+// are returned trimmed and lower-cased only (Validate reports them).
+func NormalizeHost(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	host, port, err := SplitHostOptionalPort(s)
+	if err != nil {
+		return s
+	}
+	if ip, perr := netip.ParseAddr(host); perr == nil {
+		host = ip.String()
+		if ip.Is6() {
+			host = "[" + host + "]"
+		}
+	} else {
+		host = strings.TrimSuffix(host, ".")
+	}
+	if port != "" {
+		return host + ":" + port
+	}
+	return host
 }
 
 // IsLoopbackListen reports whether listen names a loopback address

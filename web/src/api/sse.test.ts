@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { QueryClient } from '@tanstack/react-query'
-import { applyAlert, applyEvent, applyTick } from './sse'
+import { applyAlert, applyEvent, applyTick, eventMatches } from './sse'
 import { queryKeys } from './queryKeys'
 import { createMockState, overview } from './mockData'
 import type { Alert, Device, DeviceDetail, Event } from './types'
@@ -47,15 +47,31 @@ describe('applyEvent', () => {
   })
 })
 
+describe('eventMatches', () => {
+  it('treats the type param as a comma-separated list', () => {
+    const e = { type: 'device.online', deviceId: 'n1' } as Event
+    expect(eventMatches({ type: 'device.offline,device.online' }, e)).toBe(true)
+    expect(eventMatches({ type: 'device.offline' }, e)).toBe(false)
+    expect(eventMatches({ type: 'device.online', device: 'other' }, e)).toBe(false)
+    expect(eventMatches({}, e)).toBe(true)
+  })
+})
+
 describe('applyAlert', () => {
   it('updates cached alerts and the device detail open list', () => {
     const { state, qc } = seed()
     const a = state.alerts[0]!
     qc.setQueryData<Alert[]>(queryKeys.alerts({ state: 'open', limit: 200 }), [a])
     qc.setQueryData<DeviceDetail>(queryKeys.device(a.deviceId!), { device: state.devices[0]!, recentEvents: [], openAlerts: [a] })
+    const rules = state.rules
+    qc.setQueryData(queryKeys.rules, rules)
     const resolved: Alert = { ...a, state: 'resolved', resolvedAt: new Date().toISOString() }
     applyAlert(qc, resolved)
     expect(qc.getQueryData<Alert[]>(queryKeys.alerts({ state: 'open', limit: 200 }))![0]!.state).toBe('resolved')
     expect(qc.getQueryData<DeviceDetail>(queryKeys.device(a.deviceId!))!.openAlerts).toEqual([])
+    // The rules cache is not under the alerts prefix: untouched and not invalidated.
+    expect(qc.getQueryData(queryKeys.rules)).toBe(rules)
+    expect(qc.getQueryState(queryKeys.rules)?.isInvalidated).toBe(false)
+    expect(qc.getQueryState(queryKeys.alerts({ state: 'open', limit: 200 }))?.isInvalidated).toBe(true)
   })
 })

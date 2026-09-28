@@ -62,6 +62,8 @@ export function StatTile({ label, value, unit, delta, trend, tone = 'default', i
   const deltaGood = delta && deltaDir !== 'flat' ? (delta.value > 0) === (delta.upIsGood ?? true) : null
   const DeltaIcon = deltaDir === 'up' ? ArrowUpRight : deltaDir === 'down' ? ArrowDownRight : Minus
   const deltaText = delta ? (delta.format ? delta.format(delta.value) : `${delta.value > 0 ? '+' : ''}${formatPercent(delta.value, 1)}`) : null
+  // Long figures ("595.9 kb/s", "Relay via fra") step the font down so they fit next to a sparkline.
+  const longValue = typeof value === 'string' && value.length > 7
 
   const body = (
     <>
@@ -74,11 +76,17 @@ export function StatTile({ label, value, unit, delta, trend, tone = 'default', i
         ) : null}
       </div>
       <div className={cn('flex items-end justify-between gap-3', size === 'sm' ? 'mt-1.5' : 'mt-2')}>
+        {/* The figure wins: it keeps its intrinsic width and the sparkline only gets the leftover space. */}
         <div className="min-w-0">
           {loading ? (
             <Skeleton height={size === 'sm' ? 22 : 28} width={72} className="my-0.5" />
           ) : (
-            <p className={cn('truncate font-semibold tracking-tight text-fg', size === 'sm' ? 'text-xl leading-7' : 'text-2xl leading-8')}>
+            <p
+              className={cn(
+                'truncate font-semibold tracking-tight text-fg',
+                size === 'sm' ? (longValue ? 'text-lg leading-7' : 'text-xl leading-7') : longValue ? 'text-xl leading-8' : 'text-2xl leading-8',
+              )}
+            >
               {value}
               {unit ? <span className="ml-1 text-sm font-medium text-fg-muted">{unit}</span> : null}
             </p>
@@ -94,7 +102,7 @@ export function StatTile({ label, value, unit, delta, trend, tone = 'default', i
           ) : null}
         </div>
         {trend && trend.length > 1 && !loading ? (
-          <div className="w-20 shrink-0 md:w-24">
+          <div className="hidden min-w-0 max-w-24 flex-1 basis-0 @min-[200px]:block">
             <Sparkline data={trend} height={size === 'sm' ? 24 : 30} color={TONE_VAR[t]} />
           </div>
         ) : null}
@@ -103,7 +111,7 @@ export function StatTile({ label, value, unit, delta, trend, tone = 'default', i
   )
 
   const cls = cn(
-    'block min-w-0 rounded-lg border border-border bg-surface shadow-xs',
+    '@container block min-w-0 rounded-lg border border-border bg-surface shadow-xs',
     size === 'sm' ? 'p-3' : 'p-4',
     interactive && 'transition-colors hover:border-border-strong hover:bg-surface-hover focus-ring',
     className,

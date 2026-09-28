@@ -141,7 +141,8 @@ export function DevicesTable({ devices, total, columns, autoColumns, density, so
                 numeric={c.align === 'right'}
                 className={cn(
                   visClass(c),
-                  c.id === 'name' && cn(STICKY_TD, dense ? 'max-w-[300px]' : 'max-w-[260px]'),
+                  // overflow-hidden: the sticky cell paints its own background, so nothing may bleed into the next column.
+                  c.id === 'name' && cn(STICKY_TD, 'max-w-[260px] overflow-hidden'),
                   (c.id === 'path' || c.id === 'version' || c.id === 'keyExpiry' || c.id === 'ip') && 'whitespace-nowrap',
                 )}
               >

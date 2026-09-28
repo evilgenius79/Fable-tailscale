@@ -95,7 +95,7 @@ function ChartTooltip({
           return (
             <li key={s.key} className="flex items-center justify-between gap-4 text-xs">
               <span className="flex items-center gap-2 text-fg-secondary">
-                <span aria-hidden="true" className="inline-block h-0.5 w-3 rounded-full" style={{ background: s.color }} />
+                <span aria-hidden="true" className={cn('inline-block w-3 border-t-2', s.dashed ? 'border-dashed' : 'border-solid')} style={{ borderColor: s.color }} />
                 {s.label}
               </span>
               <span className={cn('num font-semibold', missing ? 'text-fg-faint' : 'text-fg')}>{missing ? '—' : (s.format ?? yFormat)(v)}</span>
@@ -353,7 +353,8 @@ export function TimeSeriesChart({
                     }
                     className={cn('inline-flex items-center gap-1.5 rounded px-1 py-0.5 text-fg-secondary hover:text-fg focus-ring', off && 'line-through opacity-50')}
                   >
-                    <span aria-hidden="true" className="inline-block h-0.5 w-3.5 rounded-full" style={{ background: s.color }} />
+                    {/* Dashed swatch for dashed series (rollup "Max" envelopes share the Average colour). */}
+                    <span aria-hidden="true" className={cn('inline-block w-3.5 border-t-2', s.dashed ? 'border-dashed' : 'border-solid')} style={{ borderColor: s.color }} />
                     {s.label}
                   </button>
                 )

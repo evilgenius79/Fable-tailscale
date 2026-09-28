@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/cn'
+import { useScrollFade } from '../../lib/useScrollFade'
 import { Card, CardHeader } from '../ui/Card'
 
 export interface SettingsSectionProps {
@@ -37,6 +38,9 @@ export interface SettingsNavProps {
 /** Sticky in-page navigation (vertical on lg+, a scrollable chip row below) with a scroll-spy highlight. */
 export function SettingsNav({ sections, className }: SettingsNavProps) {
   const [active, setActive] = useState<string>(sections[0]?.id ?? '')
+  const listRef = useRef<HTMLUListElement>(null)
+  // Phones scroll the nav horizontally with a hidden scrollbar; fade the clipped edge.
+  const fade = useScrollFade(listRef)
 
   useEffect(() => {
     if (typeof IntersectionObserver === 'undefined') return
@@ -71,7 +75,7 @@ export function SettingsNav({ sections, className }: SettingsNavProps) {
 
   return (
     <nav aria-label="Settings sections" className={cn('lg:sticky lg:top-[calc(var(--topbar-h)+24px)] lg:self-start', className)}>
-      <ul className="-mx-4 flex gap-1 overflow-x-auto px-4 pb-1 scrollbar-none lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0 lg:pb-0">
+      <ul ref={listRef} style={fade} className="-mx-4 flex gap-1 overflow-x-auto px-4 pb-1 scrollbar-none lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0 lg:pb-0">
         {sections.map((s) => {
           const on = s.id === active
           return (

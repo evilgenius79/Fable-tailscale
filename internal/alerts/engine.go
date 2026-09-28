@@ -30,6 +30,12 @@ type Engine struct {
 	// now is the clock; tests override it.
 	now func() time.Time
 
+	// ticks and unsubscribe hold the tick subscription taken in NewEngine
+	// (so the collector's first poll is never published before anyone
+	// listens); Run consumes and releases them.
+	ticks       <-chan model.Snapshot
+	unsubscribe func()
+
 	mu     sync.RWMutex
 	loaded bool
 	rules  map[string]model.AlertRule  // by rule ID
@@ -76,6 +82,9 @@ func newEngine(st *store.Store, src Source, notifiers []Notifier, log *slog.Logg
 		if n != nil {
 			e.notifiers = append(e.notifiers, n)
 		}
+	}
+	if src != nil {
+		e.ticks, e.unsubscribe = src.Ticks().Subscribe()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	defer cancel()
@@ -206,10 +215,12 @@ func newDeviceWindow(pollIntervalSec int) time.Duration {
 	return w
 }
 
-// Run subscribes to the source's ticks and evaluates every snapshot until
-// ctx is cancelled, at which point it returns nil once the notification
-// workers have stopped. It returns an error if the engine is already
-// running or its state cannot be loaded from the store.
+// Run evaluates every snapshot published by the source until ctx is
+// cancelled, at which point it returns nil once the notification workers
+// have stopped. The tick subscription is taken by NewEngine, so snapshots
+// published between construction and Run are queued rather than lost. It
+// returns an error if the engine is already running or its state cannot be
+// loaded from the store.
 func (e *Engine) Run(ctx context.Context) error {
 	if e.src == nil {
 		return errors.New("alerts: no source configured")
@@ -219,11 +230,17 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	defer e.running.Store(false)
 
+	ticks, unsubscribe := e.ticks, e.unsubscribe
+	e.ticks, e.unsubscribe = nil, nil
+	if ticks == nil {
+		// Run after an earlier Run released the subscription.
+		ticks, unsubscribe = e.src.Ticks().Subscribe()
+	}
+	defer unsubscribe()
+
 	if err := e.load(ctx); err != nil {
 		return err
 	}
-	ticks, unsubscribe := e.src.Ticks().Subscribe()
-	defer unsubscribe()
 
 	var wg sync.WaitGroup
 	for i := 0; i < notifyWorkers; i++ {
@@ -443,6 +460,7 @@ func (e *Engine) evaluate(ctx context.Context, snap model.Snapshot) {
 	}
 	sortRulesByID(rules)
 
+	removals, _ := e.src.(RemovalSource)
 	present := make(map[model.DeviceID]struct{}, len(snap.Devices))
 	active := make(map[string]struct{})
 	for i := range snap.Devices {
@@ -452,13 +470,21 @@ func (e *Engine) evaluate(ctx context.Context, snap model.Snapshot) {
 		}
 		present[d.ID] = struct{}{}
 		isNew := e.noteDeviceLocked(d, now, snap.Overview.Hub)
+		// A device the collector keeps only as a memory of a node that left
+		// the tailnet raises nothing; whatever is open for it resolves.
+		removed := removals != nil && removals.Removed(d.ID)
 		for j := range rules {
 			r := &rules[j]
 			if !ruleAppliesTo(r, d) {
 				continue
 			}
 			key := alertKey(r.ID, d.ID)
-			obs := observe(r, d, evalContext{now: now, open: e.open[key], since: e.since[key], isNew: isNew})
+			var obs observation
+			if removed {
+				obs = observation{resolved: "Device removed from the tailnet"}
+			} else {
+				obs = observe(r, d, evalContext{now: now, open: e.open[key], since: e.since[key], isNew: isNew})
+			}
 			if obs.active {
 				active[key] = struct{}{}
 				e.handleActiveLocked(ctx, r, d, key, obs, now)

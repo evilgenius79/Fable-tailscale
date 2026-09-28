@@ -5,6 +5,7 @@ import {
   RULE_TYPE_ORDER,
   alertDeviceOptions,
   alertDurationSeconds,
+  alertFiltersFromSearch,
   dayKey,
   dayLabel,
   draftFromRule,
@@ -224,6 +225,17 @@ describe('alert lists', () => {
     expect(formatAlertValue({ ruleType: 'high_load', value: 2.5 })).toBe('2.50×')
     expect(formatAlertValue({ ruleType: 'device_offline', value: 5 })).toBeNull()
     expect(formatAlertValue({ ruleType: 'high_cpu' })).toBeNull()
+  })
+})
+
+describe('alertFiltersFromSearch', () => {
+  it('seeds severity and device from a deep link and ignores junk', () => {
+    expect(alertFiltersFromSearch(new URLSearchParams('severity=critical&device=n1'))).toEqual({ severity: 'critical', device: 'n1', q: '' })
+    expect(alertFiltersFromSearch(new URLSearchParams('severity=bogus'))).toEqual({ severity: 'all', device: '', q: '' })
+  })
+  it('leaves the user filter alone when the params are absent', () => {
+    const mine = { severity: 'all' as const, device: 'n2', q: 'disk' }
+    expect(alertFiltersFromSearch(new URLSearchParams('tab=resolved'), mine)).toEqual(mine)
   })
 })
 

@@ -153,6 +153,119 @@ func TestBrowserHardening(t *testing.T) {
 	}
 }
 
+// TestHostAllowList covers the DNS-rebinding defence: a request whose Host
+// (and Origin) name a foreign domain is rejected before authentication even
+// though it is same-origin from the browser's point of view.
+func TestHostAllowList(t *testing.T) {
+	h := newHarness(t)
+	rebound := []reqOpt{hdr("Origin", "http://evil.example"), hdr("Sec-Fetch-Site", "same-origin"), func(r *http.Request) { r.Host = "evil.example" }}
+	w := h.do("DELETE", "/api/v1/devices/n-laptop", nil, ipAdmin, rebound...)
+	expect(t, w, 403, codeForbidden)
+	if h.auth.calls != 0 {
+		t.Errorf("authenticator consulted %d times for a rebound request", h.auth.calls)
+	}
+	if len(h.api.recorded()) != 0 {
+		t.Errorf("admin action performed for a rebound request: %+v", h.api.recorded())
+	}
+	expect(t, h.do("GET", "/api/v1/me", nil, ipAdmin, func(r *http.Request) { r.Host = "evil.example:8484" }), 403, codeForbidden)
+	// The UI and health check are not gated (they hold no data).
+	expect(t, h.do("GET", "/healthz", nil, ipUnknown, func(r *http.Request) { r.Host = "evil.example" }), 200, "")
+	expect(t, h.do("GET", "/", nil, ipUnknown, func(r *http.Request) { r.Host = "evil.example" }), 200, "")
+
+	setHost := func(host string) reqOpt { return func(r *http.Request) { r.Host = host } }
+	tests := []struct {
+		name   string
+		host   string
+		status int
+	}{
+		{"listen address", "100.64.0.1:8484", 200},
+		{"listen host any port", "100.64.0.1:9999", 200},
+		{"tailscale ipv6 of the hub", "[fd7a:115c:a1e0::1]:8484", 200},
+		{"magicdns fqdn", "hub.tail.ts.net:8484", 200},
+		{"magicdns fqdn no port", "hub.tail.ts.net", 200},
+		{"magicdns fqdn trailing dot upper", "HUB.Tail.TS.NET.:8484", 200},
+		{"magicdns short name", "hub", 200},
+		{"empty host", "", 403},
+		{"other tailnet member", "laptop.tail.ts.net:8484", 403},
+		{"foreign domain", "evil.example", 403},
+		{"foreign ip", "203.0.113.9:8484", 403},
+		{"loopback not accepted on a tailscale listener", "127.0.0.1:8484", 403},
+		{"localhost not accepted on a tailscale listener", "localhost:8484", 403},
+		{"unspecified", "0.0.0.0:8484", 403},
+		{"garbage", "a:b:c", 403},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := h.do("GET", "/api/v1/me", nil, ipViewer, setHost(tc.host))
+			if w.Code != tc.status {
+				t.Fatalf("Host %q: status = %d, want %d; body %q", tc.host, w.Code, tc.status, w.Body.String())
+			}
+		})
+	}
+
+	// --allowed-hosts adds reverse-proxy / TLS names; an entry with a port
+	// is exact, one without matches any port.
+	h.srv.hosts = newHostPolicy(mustCfg(t, "--listen", "100.64.0.1:8484", "--allowed-hosts", "proxy.example.com,tls.example.com:8443"))
+	for host, status := range map[string]int{
+		"proxy.example.com": 200, "proxy.example.com:443": 200, "PROXY.example.com.:1234": 200,
+		"tls.example.com:8443": 200, "tls.example.com": 403, "tls.example.com:8444": 403, "evil.example": 403,
+	} {
+		w := h.do("GET", "/api/v1/me", nil, ipViewer, setHost(host))
+		if w.Code != status {
+			t.Errorf("allowed-hosts: Host %q: status = %d, want %d", host, w.Code, status)
+		}
+	}
+
+	// Loopback names are accepted in demo mode, with --insecure-no-auth
+	// and when the listener is bound to loopback.
+	for _, args := range [][]string{
+		{"--listen", "100.64.0.1:8484", "--demo"},
+		{"--listen", "127.0.0.1:8484", "--insecure-no-auth"},
+		{"--listen", "localhost:8484"},
+	} {
+		h.srv.hosts = newHostPolicy(mustCfg(t, args...))
+		for _, host := range []string{"localhost:8484", "127.0.0.1:8484", "[::1]:8484", "127.0.0.1:9", "localhost"} {
+			if w := h.do("GET", "/api/v1/me", nil, ipViewer, setHost(host)); w.Code != 200 {
+				t.Errorf("%v: Host %q: status = %d, want 200", args, host, w.Code)
+			}
+		}
+		if w := h.do("GET", "/api/v1/me", nil, ipViewer, setHost("evil.example")); w.Code != 403 {
+			t.Errorf("%v: foreign host accepted", args)
+		}
+	}
+
+	// The address the listener actually bound (--listen auto) is accepted,
+	// and a loopback bind enables loopback names.
+	h.srv.hosts = newHostPolicy(mustCfg(t, "--listen", "auto"))
+	h.srv.hosts.setBound("100.64.0.1:8484")
+	if w := h.do("GET", "/api/v1/me", nil, ipViewer, setHost("localhost:8484")); w.Code != 403 {
+		t.Errorf("loopback accepted on a tailscale bind")
+	}
+	h.srv.hosts.setBound("127.0.0.1:43210")
+	for _, host := range []string{"127.0.0.1:43210", "127.0.0.1:8484", "localhost:43210"} {
+		if w := h.do("GET", "/api/v1/me", nil, ipViewer, setHost(host)); w.Code != 200 {
+			t.Errorf("bound loopback: Host %q: status = %d", host, w.Code)
+		}
+	}
+	h.srv.hosts = newHostPolicy(mustCfg(t, "--listen", "0.0.0.0:8484", "--insecure-listen-any"))
+	h.srv.hosts.setBound("0.0.0.0:8484")
+	if w := h.do("GET", "/api/v1/me", nil, ipViewer, setHost("0.0.0.0:8484")); w.Code != 403 {
+		t.Errorf("unspecified bind address accepted as a Host")
+	}
+	if w := h.do("GET", "/api/v1/me", nil, ipViewer, setHost("hub.tail.ts.net:8484")); w.Code != 200 {
+		t.Errorf("magicdns name rejected on an unspecified bind: %d", w.Code)
+	}
+}
+
+func mustCfg(t *testing.T, args ...string) *config.Config {
+	t.Helper()
+	cfg, err := config.Load(args, nil)
+	if err != nil {
+		t.Fatalf("config %v: %v", args, err)
+	}
+	return cfg
+}
+
 func TestAuthenticationResponses(t *testing.T) {
 	h := newHarness(t)
 	tests := []struct {

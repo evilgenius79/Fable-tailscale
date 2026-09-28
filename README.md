@@ -136,7 +136,7 @@ Open <http://127.0.0.1:8484>. In demo mode authentication is off and you are
    ```sh
    curl -fsSLO https://raw.githubusercontent.com/evilgenius79/fable-tailscale/main/scripts/install-hub.sh
    less install-hub.sh                                # always read installers first
-   sudo sh install-hub.sh --admin you@example.com --operator
+   sudo sh install-hub.sh --admin you@example.com
    ```
 
    Then open `http://<hub-tailscale-ip>:8484/` from any device on the
@@ -196,15 +196,20 @@ API: [docs/API.md](docs/API.md).
 
 ## Configuration
 
-Flags override environment variables. Lists are comma-separated in the
-environment. Run `tailwatch --help` / `tailwatch-agent --help` for the
-authoritative list of your version.
+Flags override environment variables (exception: the agent's repeatable
+`--allow-*` flags are **added to** the values from `TAILWATCH_AGENT_ALLOW_*`
+rather than replacing them). Lists are comma-separated in the environment.
+Out-of-range values are a startup error (exit 2), not silently clamped. Run
+`tailwatch --help` / `tailwatch-agent --help` for the authoritative list of
+your version.
 
 ### Hub (`tailwatch`)
 
 | Flag | Environment | Default | Description |
 |---|---|---|---|
-| `--listen` | `TAILWATCH_LISTEN` | `auto` | `auto` = first Tailscale IPv4 + `:8484`; or `host:port`. |
+| `--listen` | `TAILWATCH_LISTEN` | `auto` | `auto` = first Tailscale IPv4 + `:8484`; or `host:port`. Non-Tailscale, non-loopback addresses (`0.0.0.0`, a LAN IP) are refused unless `--insecure-listen-any` is set. |
+| `--insecure-listen-any` | `TAILWATCH_INSECURE_LISTEN_ANY` | `false` | Allow binding a non-Tailscale, non-loopback address. Not recommended. |
+| `--allowed-hosts` | `TAILWATCH_ALLOWED_HOSTS` | – | Extra `Host` header values (`host` or `host:port`) the hub answers to, e.g. a reverse-proxy or TLS name. The listen address, Tailscale IPs and MagicDNS name are always accepted; anything else is rejected (DNS-rebinding defence). |
 | `--data-dir` | `TAILWATCH_DATA_DIR` | `./data` | Directory for `tailwatch.db` (created 0700). |
 | `--socket` | `TAILWATCH_SOCKET` | platform default | `tailscaled` LocalAPI socket path. |
 | `--demo` | `TAILWATCH_DEMO` | `false` | Simulated tailnet, auth disabled, 24h backfilled history. |
@@ -213,24 +218,24 @@ authoritative list of your version.
 | `--admin-tags` | `TAILWATCH_ADMIN_TAGS` | – | Nodes carrying these tags get the admin role. |
 | `--viewers` | `TAILWATCH_VIEWERS` | `*` | Login names allowed to view (`*` = any tailnet identity). |
 | `--viewer-tags` | `TAILWATCH_VIEWER_TAGS` | – | Nodes carrying these tags may view. |
-| `--enable-admin-actions` | `TAILWATCH_ENABLE_ADMIN_ACTIONS` | `false` | Allow device admin actions (needs a control-API credential). |
+| `--enable-admin-actions` | `TAILWATCH_ENABLE_ADMIN_ACTIONS` | `false` | Allow device admin actions. The hub refuses to start with this set unless a control-API credential is configured. |
 | `--tailnet` | `TAILWATCH_TAILNET` | `-` | Tailnet for the control API (`-` = the credential's own). |
 | – | `TS_API_KEY` | – | Control-API key. Environment only. |
 | – | `TS_OAUTH_CLIENT_ID` | – | Control-API OAuth client id. Environment only. |
 | – | `TS_OAUTH_CLIENT_SECRET` | – | Control-API OAuth client secret. Environment only. |
 | `--api-base-url` | `TAILWATCH_API_BASE_URL` | `https://api.tailscale.com` | Control-API base URL. |
-| `--poll-interval` | `TAILWATCH_POLL_INTERVAL` | `15s` | LocalAPI poll (minimum 5s). |
-| `--api-interval` | `TAILWATCH_API_INTERVAL` | `60s` | Control-API poll. |
-| `--ping-interval` | `TAILWATCH_PING_INTERVAL` | `30s` | Disco ping cadence; `0` disables. |
-| `--ping-concurrency` | `TAILWATCH_PING_CONCURRENCY` | `8` | Parallel pings. |
+| `--poll-interval` | `TAILWATCH_POLL_INTERVAL` | `15s` | LocalAPI poll (5s–1h). |
+| `--api-interval` | `TAILWATCH_API_INTERVAL` | `60s` | Control-API poll (30s–24h). |
+| `--ping-interval` | `TAILWATCH_PING_INTERVAL` | `30s` | Disco ping cadence (10s–1h); `0` disables. |
+| `--ping-concurrency` | `TAILWATCH_PING_CONCURRENCY` | `8` | Parallel pings (1–256). |
 | `--agent-enabled` | `TAILWATCH_AGENT_ENABLED` | `true` | Poll agents. |
 | `--agent-port` | `TAILWATCH_AGENT_PORT` | `41820` | Port agents listen on. |
 | – | `TAILWATCH_AGENT_TOKEN` | – | Shared token sent as `X-Tailwatch-Token`. Environment only. |
-| `--agent-concurrency` | `TAILWATCH_AGENT_CONCURRENCY` | `8` | Parallel agent fetches. |
-| `--agent-timeout` | `TAILWATCH_AGENT_TIMEOUT` | `5s` | Per-agent request timeout. |
-| `--raw-retention` | `TAILWATCH_RAW_RETENTION` | `48h` | Keep raw samples this long. |
-| `--rollup-retention` | `TAILWATCH_ROLLUP_RETENTION` | `2160h` (90d) | Keep 5-minute rollups this long. |
-| `--event-retention` | `TAILWATCH_EVENT_RETENTION` | `2160h` (90d) | Keep events/alerts this long. |
+| `--agent-concurrency` | `TAILWATCH_AGENT_CONCURRENCY` | `8` | Parallel agent fetches (1–256). |
+| `--agent-timeout` | `TAILWATCH_AGENT_TIMEOUT` | `5s` | Per-agent request timeout (1s–2m). |
+| `--raw-retention` | `TAILWATCH_RAW_RETENTION` | `48h` | Keep raw samples this long (≥ 1h). |
+| `--rollup-retention` | `TAILWATCH_ROLLUP_RETENTION` | `2160h` (90d) | Keep 5-minute rollups this long (≥ 1h). |
+| `--event-retention` | `TAILWATCH_EVENT_RETENTION` | `2160h` (90d) | Keep events/alerts this long (≥ 1h). |
 | `--webhook-url` | `TAILWATCH_WEBHOOK_URL` | – | Generic JSON webhook for alerts. |
 | – | `TAILWATCH_WEBHOOK_SECRET` | – | HMAC-SHA256 key → `X-Tailwatch-Signature`. Environment only. |
 | `--slack-webhook-url` | `TAILWATCH_SLACK_WEBHOOK_URL` | – | Slack/Discord-compatible incoming webhook. |
@@ -239,6 +244,9 @@ authoritative list of your version.
 | `--tls-cert` / `--tls-key` | `TAILWATCH_TLS_CERT` / `TAILWATCH_TLS_KEY` | – | PEM files; when set the hub serves HTTPS (see `tailscale cert`). |
 | `--log-level` | `TAILWATCH_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. |
 | `--log-json` | `TAILWATCH_LOG_JSON` | `false` | JSON log lines. |
+| `--version` | – | – | Print the version and exit. |
+
+Logs go to **stderr** (stdout only carries `--help` / `--version` output).
 
 Secrets (API key, OAuth secret, agent token, webhook secret, ntfy token) are
 accepted **only** from the environment or a 0600 `EnvironmentFile`
@@ -254,12 +262,15 @@ visible to every local process.
 | `--port` | `TAILWATCH_AGENT_PORT` | `41820` | Port for `auto`. |
 | `--auth` | `TAILWATCH_AGENT_AUTH` | `whois` | `whois` / `token` / `both`. |
 | – | `TAILWATCH_AGENT_TOKEN` | – | Shared token. Environment only. |
-| `--allow-user` | `TAILWATCH_AGENT_ALLOW_USER` | – | Allowed caller logins (repeatable). |
-| `--allow-tag` | `TAILWATCH_AGENT_ALLOW_TAG` | – | Allowed caller tags (repeatable). |
-| `--allow-node` | `TAILWATCH_AGENT_ALLOW_NODE` | – | Allowed caller MagicDNS names (repeatable). |
+| `--allow-user` | `TAILWATCH_AGENT_ALLOW_USER` | – | Allowed caller logins (repeatable; env and flag values are combined). |
+| `--allow-tag` | `TAILWATCH_AGENT_ALLOW_TAG` | – | Allowed caller tags (repeatable; combined). |
+| `--allow-node` | `TAILWATCH_AGENT_ALLOW_NODE` | – | Allowed caller MagicDNS names (repeatable; combined). |
 | `--interval` | `TAILWATCH_AGENT_INTERVAL` | `5s` | Sampling interval. |
 | `--socket` | `TAILWATCH_AGENT_SOCKET` | platform default | `tailscaled` socket path. |
 | `--insecure-listen-any` | `TAILWATCH_AGENT_INSECURE_LISTEN_ANY` | `false` | Allow a non-Tailscale listen address. |
+| `--log-level` | `TAILWATCH_AGENT_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. |
+| `--log-json` | `TAILWATCH_AGENT_LOG_JSON` | `false` | JSON log lines (to stderr). |
+| `--version` | – | – | Print the version and exit. |
 
 With `whois` and no allow-lists, the agent accepts nodes owned by the same
 user as the device and tagged nodes carrying `tag:tailwatch`. Everything
@@ -333,15 +344,20 @@ with `tailscale cert` for HTTPS instead.
 
 **Resource usage?**
 The hub is a single static binary: tens of MB of RAM for a few dozen devices,
-negligible CPU, and roughly 60 MB of SQLite per 100 devices at the default
-15s/48h raw retention (rollups are tiny). The agent uses ~10–20 MB RAM and
-samples every 5s. A Raspberry Pi is a fine hub.
+negligible CPU, and roughly 150–200 MB of SQLite per 100 devices at the
+default 15s/48h raw retention (≈ 140 bytes per raw sample incl. indexes;
+rollups are tiny). Halve it with `--poll-interval 30s` or a shorter
+`--raw-retention`. The agent uses ~10–20 MB RAM and samples every 5s. A
+Raspberry Pi is a fine hub.
 
 **Does the hub need root?**
-No. It needs read access to the `tailscaled` socket (default on Linux) and a
-writable data directory. Disco pings additionally need write access — grant
-it with `sudo tailscale set --operator=tailwatch` or set
-`--ping-interval 0`.
+No. It needs read access to the `tailscaled` socket (world-connectable on
+Linux by default) and a writable data directory. Status, WhoIs and disco
+pings are all served to read-only LocalAPI clients, so it does **not** need
+to be the `tailscaled` operator — do not grant that (an operator can also run
+`tailscale up/down/logout`). Only if your `tailscaled` build denies pings,
+run `sudo tailscale set --operator=tailwatch` or set `--ping-interval 0`
+(see [docs/DEPLOY.md](docs/DEPLOY.md#disco-pings-and-tailscaled-permissions)).
 
 **How is uptime measured?**
 From the hub's point of view: a device is "online" in a sample when

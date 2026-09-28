@@ -106,7 +106,7 @@ export function OpenAlertsCard({ limit = 6 }: { limit?: number }) {
               alert={a}
               canAck={isAdmin}
               acking={ack.isPending && ack.variables === a.id}
-              onAck={() => ack.mutate(a.id, { onSuccess: () => toast.success('Alert acknowledged', a.title, { duration: 2500 }) })}
+              onAck={() => ack.mutate(a.id, { onSuccess: () => toast.success('Alert acknowledged', a.title, { id: `alert-${a.id}`, duration: 2500 }) })}
             />
           ))}
         </ul>

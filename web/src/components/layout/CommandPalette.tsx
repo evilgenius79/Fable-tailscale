@@ -7,6 +7,7 @@ import { useDevices } from '../../api/hooks'
 import { cn } from '../../lib/cn'
 import { osInfo } from '../../lib/os'
 import { deviceStatus } from '../../lib/status'
+import { useFocusTrap } from '../../lib/useFocusTrap'
 import { useUIStore } from '../../store'
 import { Kbd } from '../ui/Kbd'
 import { StatusDot } from '../ui/StatusDot'
@@ -39,8 +40,11 @@ export function CommandPalette() {
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const id = useId()
   const { data: devices, isPending } = useDevices()
+  // aria-modal: Tab must not reach the page behind the overlay (options are not focusable, so focus stays in the combobox).
+  useFocusTrap(panelRef, open)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -116,6 +120,7 @@ export function CommandPalette() {
     <div className="fixed inset-0 z-[95] flex items-start justify-center p-4 pt-[12vh] sm:pt-[18vh]" role="presentation">
       <div className="absolute inset-0 bg-overlay animate-fade-in backdrop-blur-[2px]" onClick={() => setOpen(false)} aria-hidden="true" />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="Search"

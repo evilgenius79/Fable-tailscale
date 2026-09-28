@@ -21,9 +21,12 @@
 #   --viewer LOGIN          Restrict viewers to these logins (repeatable; default: any tailnet identity)
 #   --viewer-tag TAG        Nodes carrying TAG get the viewer role (repeatable)
 #   --enable-admin-actions  Allow device admin actions through the control API
+#                           (the hub refuses to start without TS_API_KEY or
+#                           TS_OAUTH_CLIENT_ID/SECRET in the environment)
 #   --listen ADDR           Listen address (default: auto = Tailscale IPv4:8484)
 #   --tailnet NAME          Tailnet name for the control API (default: "-" = key's tailnet)
-#   --operator              Run 'tailscale set --operator=tailwatch' so the hub can send disco pings
+#   --operator              Run 'tailscale set --operator=tailwatch'. Not needed for pings on
+#                           current tailscaled releases; only if yours denies them (docs/DEPLOY.md)
 #   --opt "FLAGS"           Extra hub flags appended to TAILWATCH_OPTS
 #   --overwrite-env         Replace an existing /etc/tailwatch/hub.env
 #   --require-checksum      Fail when the release has no SHA256SUMS
@@ -88,9 +91,9 @@ cat <<'UNIT_EOF'
 # Data:      /var/lib/tailwatch (StateDirectory, created by systemd, owned by the service user).
 # Logs:      journalctl -u tailwatch -f
 #
-# The hub only needs: the tailscaled LocalAPI socket (read access is enough for
-# status + WhoIs; disco pings need write access, see docs/DEPLOY.md), outbound
-# HTTPS to api.tailscale.com (optional) and TCP to agents on the tailnet.
+# The hub only needs: the tailscaled LocalAPI socket (plain read access covers
+# status, WhoIs and disco pings — no operator rights, see docs/DEPLOY.md),
+# outbound HTTPS to api.tailscale.com (optional) and TCP to agents on the tailnet.
 
 [Unit]
 Description=Tailwatch hub (Tailscale network viewer and watchdog)
@@ -101,10 +104,12 @@ Requires=tailscaled.service
 
 [Service]
 Type=simple
-# Dedicated system user (created by scripts/install-hub.sh). To grant it
-# write access to tailscaled (needed for on-demand/periodic disco pings):
+# Dedicated system user (created by scripts/install-hub.sh); DynamicUser=yes
+# works too. It needs no tailscaled operator rights: status, WhoIs and pings
+# are all served to read-only LocalAPI clients. Only if your tailscaled build
+# denies pings (permission errors from "ping" in the log) either run
 #   sudo tailscale set --operator=tailwatch
-# Alternatively use DynamicUser=yes and set TAILWATCH_PING_INTERVAL=0.
+# or set TAILWATCH_PING_INTERVAL=0 in hub.env.
 User=tailwatch
 Group=tailwatch
 # Uncomment if your tailscaled socket is group-restricted (not the Linux default):
@@ -150,9 +155,10 @@ RemoveIPC=yes
 
 # --- Network / syscalls -----------------------------------------------------
 # AF_UNIX: tailscaled socket. AF_INET/AF_INET6: listener, agents, control API.
-# AF_NETLINK: Go's net.Interfaces() (used to find the Tailscale IP for
-# --listen auto); drop it if you always pass an explicit --listen.
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+# AF_NETLINK is deliberately absent: the hub never enumerates interfaces (it
+# asks tailscaled for its Tailscale IP, also for --listen auto). Add it only if
+# the log shows "address family not supported by protocol" socket errors.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
 SystemCallErrorNumber=EPERM
@@ -315,7 +321,7 @@ if [ -n "${TS_API_KEY:-}" ] || { [ -n "${TS_OAUTH_CLIENT_ID:-}" ] && [ -n "${TS_
 	HAVE_CONTROL_API=1
 fi
 if [ "$ADMIN_ACTIONS" = 1 ] && [ "$HAVE_CONTROL_API" = 0 ]; then
-	warn "--enable-admin-actions has no effect without TS_API_KEY or TS_OAUTH_CLIENT_ID/SECRET"
+	die "--enable-admin-actions requires TS_API_KEY or TS_OAUTH_CLIENT_ID/SECRET in the environment; the hub refuses to start without them (add the credential to $ENV_FILE first, or drop the flag)"
 fi
 
 OS="$(detect_os)"
@@ -421,7 +427,7 @@ if [ "$INSTALL_SERVICE" = 1 ]; then
 		write_env | grep -E '^[A-Z]' | sed -E "s/^(TS_OAUTH_CLIENT_SECRET|TS_API_KEY|TAILWATCH_AGENT_TOKEN|TAILWATCH_WEBHOOK_SECRET|TAILWATCH_NTFY_TOKEN|TAILWATCH_NTFY_URL|TAILWATCH_[A-Z_]*WEBHOOK_URL)=.*/\1=<redacted>/" | sed 's/^/        /'
 	fi
 	log "  - install $UNIT_PATH (hardened unit, see --print-unit); data in $DATA_DIR"
-	[ "$OPERATOR" = 0 ] || log "  - tailscale set --operator=$SVC_USER (lets the hub send disco pings)"
+	[ "$OPERATOR" = 0 ] || log "  - tailscale set --operator=$SVC_USER (grants the hub tailscaled operator rights; only needed if your tailscaled denies pings)"
 	log "  - systemctl daemon-reload && systemctl enable --now $SVC_NAME"
 elif [ "$NO_SERVICE" = 1 ]; then
 	log "  - --no-service: no user, env file or unit will be created"
@@ -511,7 +517,7 @@ systemctl daemon-reload
 
 if [ "$OPERATOR" = 1 ]; then
 	if have tailscale; then
-		tailscale set --operator="$SVC_USER" || warn "tailscale set --operator failed; pings will be unavailable (set TAILWATCH_PING_INTERVAL=0)"
+		tailscale set --operator="$SVC_USER" || warn "tailscale set --operator failed; the hub works without it unless your tailscaled denies pings (then set TAILWATCH_PING_INTERVAL=0 in $ENV_FILE)"
 	else
 		warn "tailscale CLI not found; skipping --operator"
 	fi
@@ -531,4 +537,4 @@ log "  - check:   systemctl status $SVC_NAME ; journalctl -u $SVC_NAME -n 20"
 log "  - open:    http://<hub-tailscale-ip>:8484/ from any device on your tailnet"
 log "  - ACL:     let members reach the hub on TCP 8484 and the hub reach agents on TCP 41820 (docs/DEPLOY.md)"
 log "  - agents:  scripts/install-agent.sh on each device you want CPU/memory/disk metrics from (docs/AGENT.md)"
-[ "$OPERATOR" = 1 ] || log "  - pings:   sudo tailscale set --operator=$SVC_USER  (or set TAILWATCH_PING_INTERVAL=0 in $ENV_FILE)"
+[ "$OPERATOR" = 1 ] || log "  - pings:   work with read-only socket access; only if the log shows permission errors from ping: sudo tailscale set --operator=$SVC_USER  (or TAILWATCH_PING_INTERVAL=0 in $ENV_FILE)"

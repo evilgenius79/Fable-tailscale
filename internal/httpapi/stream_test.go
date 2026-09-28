@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,6 +71,9 @@ func TestStream(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "GET", ts.URL+"/api/v1/stream", nil)
+	// httptest's Host (127.0.0.1) is not one of the hub's names when the
+	// configured listen address is a Tailscale IP; send the hub's name.
+	req.Host = hostHeader
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("stream: %v", err)
@@ -146,9 +150,104 @@ func TestStream(t *testing.T) {
 
 func TestStreamRequiresAuth(t *testing.T) {
 	h := newHarness(t)
+	// The alert engine holds a tick subscription from construction, so
+	// compare against the baseline rather than expecting zero.
+	before := h.col.Ticks().Len()
 	w := h.do("GET", "/api/v1/stream", nil, ipUnknown)
 	expect(t, w, 401, codeUnauthorized)
-	if h.col.Ticks().Len() != 0 {
-		t.Error("unauthenticated stream subscribed to the tick bus")
+	if got := h.col.Ticks().Len(); got != before {
+		t.Errorf("unauthenticated stream subscribed to the tick bus (subscribers %d -> %d)", before, got)
 	}
+}
+
+// TestStreamCap checks that concurrently open streams are capped per
+// identity and in total, and that closed streams free their slot.
+func TestStreamCap(t *testing.T) {
+	h := newHarness(t)
+	h.srv.auth = alwaysViewer{}
+	h.srv.maxStreamsPerIdentity = 2
+	h.srv.maxStreamsTotal = 3
+	ts := httptest.NewServer(h.srv.Handler())
+	defer ts.Close()
+
+	open := func(ctx context.Context, remote string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequestWithContext(ctx, "GET", ts.URL+"/api/v1/stream", nil)
+		req.Host = hostHeader
+		// Distinct identities come from distinct source addresses under
+		// alwaysViewer; X-Forwarded-For is not consulted, so bind the
+		// client to a different loopback address per identity.
+		tr := &http.Transport{DisableKeepAlives: true}
+		if remote != "" {
+			d := &net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP(remote)}}
+			tr.DialContext = d.DialContext
+		}
+		resp, err := (&http.Client{Transport: tr}).Do(req)
+		if err != nil {
+			t.Fatalf("stream: %v", err)
+		}
+		return resp
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var opened []*http.Response
+	for i := 0; i < 2; i++ {
+		resp := open(ctx, "")
+		if resp.StatusCode != 200 {
+			t.Fatalf("stream %d status = %d", i, resp.StatusCode)
+		}
+		readFrame(t, bufio.NewReader(resp.Body), 3*time.Second) // hello: the slot is held
+		opened = append(opened, resp)
+	}
+	third := open(ctx, "")
+	if third.StatusCode != http.StatusTooManyRequests || third.Header.Get("Retry-After") == "" {
+		t.Fatalf("third stream for one identity: status %d, Retry-After %q", third.StatusCode, third.Header.Get("Retry-After"))
+	}
+	var eb errorBody
+	if err := json.NewDecoder(third.Body).Decode(&eb); err != nil || eb.Error.Code != codeRateLimited {
+		t.Fatalf("third stream body: %+v (%v)", eb, err)
+	}
+	third.Body.Close()
+	if perKey, total := h.srv.streams.open("bob@example.com|n-bob|127.0.0.1"); perKey != 2 || total != 2 {
+		t.Fatalf("gauge = %d/%d, want 2/2", perKey, total)
+	}
+
+	// Another identity gets the last global slot, then the global cap bites.
+	other := open(ctx, "127.0.0.2")
+	if other.StatusCode == http.StatusTooManyRequests {
+		t.Skip("127.0.0.2 is not bindable on this host")
+	}
+	if other.StatusCode != 200 {
+		t.Fatalf("other identity status = %d", other.StatusCode)
+	}
+	readFrame(t, bufio.NewReader(other.Body), 3*time.Second)
+	opened = append(opened, other)
+	if fourth := open(ctx, "127.0.0.3"); fourth.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("beyond the global cap: status %d", fourth.StatusCode)
+	} else {
+		fourth.Body.Close()
+	}
+
+	// Closing streams frees their slots.
+	cancel()
+	for _, r := range opened {
+		r.Body.Close()
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, total := h.srv.streams.open(""); total == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			_, total := h.srv.streams.open("")
+			t.Fatalf("%d streams still counted after close", total)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	resp := open(context.Background(), "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("stream after release: status %d", resp.StatusCode)
+	}
+	resp.Body.Close()
 }

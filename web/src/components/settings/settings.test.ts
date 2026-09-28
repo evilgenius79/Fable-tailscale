@@ -95,7 +95,11 @@ describe('notifiers & audit', () => {
   })
   it('links audit targets', () => {
     expect(auditTargetLink({ action: 'device.routes', target: 'n1/x' })).toBe('/devices/n1%2Fx')
-    expect(auditTargetLink({ action: 'rule.save', target: 'high_cpu' })).toBe('/alerts?tab=rules&rule=high_cpu')
+    // The hub records rule changes as `rule.update` (internal/httpapi/handlers.go).
+    expect(auditTargetLink({ action: 'rule.update', target: 'high_cpu' })).toBe('/alerts?tab=rules&rule=high_cpu')
+    expect(auditActionLabel('rule.update')).toBe('Update rule')
+    // `tab=all` is not a valid alerts tab; acks land on the Open tab.
+    expect(auditTargetLink({ action: 'alert.ack', target: '12' })).toBe('/alerts?tab=open')
     expect(auditTargetLink({ action: 'alerts.test', target: 'webhook' })).toBeUndefined()
     expect(auditTargetLink({ action: 'device.ping', target: '' })).toBeUndefined()
   })

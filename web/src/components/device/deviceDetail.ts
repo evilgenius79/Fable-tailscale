@@ -2,8 +2,21 @@
 // trends, DERP/NAT/route rows, uptime timeline geometry, badge derivation and
 // input validation for the admin dialogs. No React, fully unit-tested.
 
-import type { Device, MetricsSnapshot, NATSupport, SeriesPoint, UptimeReport } from '../../api/types'
-import type { StatusTone } from '../../lib/status'
+import type { Device, MetricsSnapshot, NATSupport, PingResult, SeriesPoint, UptimeReport } from '../../api/types'
+import { formatLatency, formatTime } from '../../lib/format'
+import { pathLabel, type StatusTone } from '../../lib/status'
+
+// ---------------------------------------------------------------------------
+// Ping
+// ---------------------------------------------------------------------------
+
+/** Toast contents for a ping result; the id is per device so a re-ping replaces the previous toast. */
+export function pingResultToast(device: Pick<Device, 'id' | 'name'>, r: PingResult): { id: string; tone: 'success' | 'error'; title: string; description?: string } {
+  const id = `ping-${device.id}`
+  if (r.error) return { id, tone: 'error', title: `Ping failed · ${device.name}`, description: r.error }
+  const parts = [formatLatency(r.latencyMs), pathLabel(r.path, r.relay), r.endpoint, formatTime(r.at, true)].filter((s): s is string => !!s)
+  return { id, tone: 'success', title: `Ping · ${device.name}`, description: parts.join(' · ') }
+}
 
 // ---------------------------------------------------------------------------
 // Validation (admin dialogs)

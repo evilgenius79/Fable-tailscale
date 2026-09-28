@@ -122,7 +122,7 @@ function AlertRow({ a, isAdmin }: { a: Alert; isAdmin: boolean }) {
           variant="outline"
           leadingIcon={Check}
           loading={ack.isPending}
-          onClick={() => ack.mutate(a.id, { onSuccess: () => toast.success('Alert acknowledged', 'Notifications are muted until it resolves.') })}
+          onClick={() => ack.mutate(a.id, { onSuccess: () => toast.success('Alert acknowledged', 'Notifications are muted until it resolves.', { id: `alert-${a.id}` }) })}
           className="basis-full sm:basis-auto"
         >
           Acknowledge
@@ -142,7 +142,7 @@ export function DeviceAlerts({ alerts, isAdmin, deviceId, deviceName }: { alerts
         description={open.length ? plural(open.length, 'alert') : 'Watchdog rules that currently fire for this device'}
         icon={BellOff}
         actions={
-          <Link to={`/alerts?device=${encodeURIComponent(deviceId)}`} className={buttonClass({ variant: 'ghost', size: 'xs' })}>
+          <Link to={`/alerts?tab=resolved&device=${encodeURIComponent(deviceId)}`} className={buttonClass({ variant: 'ghost', size: 'xs' })}>
             Alert history
           </Link>
         }

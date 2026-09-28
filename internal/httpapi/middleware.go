@@ -238,14 +238,21 @@ func originMatchesHost(origin string, r *http.Request) bool {
 	return normalizeHost(u.Host, u.Scheme) == normalizeHost(r.Host, reqScheme)
 }
 
-// normalizeHost lower-cases host and strips the scheme's default port.
+// normalizeHost canonicalizes a "host" or "host:port" value (lower-case,
+// no trailing dot, canonical IP literals) and fills in the scheme's default
+// port so "hub" and "hub:80" compare equal. An unparsable value yields "".
 func normalizeHost(host, scheme string) string {
-	host = strings.ToLower(host)
-	def := ":80"
-	if scheme == "https" {
-		def = ":443"
+	e, ok := parseHostEntry(host)
+	if !ok {
+		return ""
 	}
-	return strings.TrimSuffix(host, def)
+	if e.port == "" {
+		e.port = "80"
+		if scheme == "https" {
+			e.port = "443"
+		}
+	}
+	return e.name + ":" + e.port
 }
 
 // authenticate resolves the caller's identity from the remote address and
@@ -282,14 +289,19 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, codeUnauthorized, "request could not be attributed to a tailnet identity")
 			return
 		}
-		key := id.Login + "|" + string(id.NodeID) + "|" + id.NodeIP
-		if !s.limiter.allow(key) {
+		if !s.limiter.allow(limiterKey(id)) {
 			w.Header().Set("Retry-After", "1")
 			writeError(w, http.StatusTooManyRequests, codeRateLimited, "too many requests")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// limiterKey is the per-identity key shared by the rate limiter and the
+// stream cap.
+func limiterKey(id *model.Identity) string {
+	return id.Login + "|" + string(id.NodeID) + "|" + id.NodeIP
 }
 
 // requireAdmin rejects non-admin identities with 403.

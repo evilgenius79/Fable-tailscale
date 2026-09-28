@@ -172,7 +172,7 @@ export function TH({ sortKey, sort, onSort, align = 'left', width, hideBelow, hi
         <button
           type="button"
           onClick={() => onSort(sortKey)}
-          className={cn('-mx-1 inline-flex items-center gap-1 rounded px-1 py-0.5 hover:text-fg focus-ring', align === 'right' && 'flex-row-reverse', active && 'text-fg')}
+          className={cn('-mx-1 inline-flex items-center gap-1 rounded px-1 py-0.5 hover:text-fg focus-ring', active && 'text-fg')}
         >
           <span>{children}</span>
           <Icon className={cn('size-3.5', active ? 'text-fg' : 'text-fg-faint')} aria-hidden="true" />

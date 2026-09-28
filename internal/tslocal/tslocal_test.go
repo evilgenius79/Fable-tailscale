@@ -316,6 +316,26 @@ func TestMapPeer(t *testing.T) {
 			},
 		},
 		{
+			name: "peer relay replaces home DERP as relay",
+			st:   st,
+			ps:   &ipnstate.PeerStatus{ID: "pr", Relay: "nyc", PeerRelay: "203.0.113.5:41641:vni:7", Online: true},
+			check: func(t *testing.T, p source.LocalPeer) {
+				if p.Relay != "peer-relay 203.0.113.5:41641:vni:7" || p.CurAddr != "" {
+					t.Errorf("relay = %q curaddr = %q, want peer relay label and empty curaddr", p.Relay, p.CurAddr)
+				}
+			},
+		},
+		{
+			name: "direct peer keeps home DERP even with a peer relay",
+			st:   st,
+			ps:   &ipnstate.PeerStatus{ID: "pd", Relay: "nyc", PeerRelay: "203.0.113.5:41641:vni:7", CurAddr: "1.2.3.4:41641"},
+			check: func(t *testing.T, p source.LocalPeer) {
+				if p.Relay != "nyc" || p.CurAddr != "1.2.3.4:41641" {
+					t.Errorf("relay = %q curaddr = %q", p.Relay, p.CurAddr)
+				}
+			},
+		},
+		{
 			name: "empty tags view yields empty non-nil tags",
 			st:   st,
 			ps: func() *ipnstate.PeerStatus {
@@ -586,6 +606,19 @@ func TestMapPing(t *testing.T) {
 	}
 	if z := MapPing(nil); z != (source.PingReply{}) {
 		t.Errorf("nil result = %+v, want zero", z)
+	}
+
+	// A peer-relayed reply has neither endpoint nor DERP region; it maps to
+	// a relay via the peer relay label so it is not mistaken for a
+	// classification-free reply.
+	pr := MapPing(&ipnstate.PingResult{LatencySeconds: 0.01, PeerRelay: "203.0.113.5:41641:vni:7", NodeName: "zeta"})
+	if pr.Endpoint != "" || pr.DERPRegionID != 0 || pr.DERPRegionCode != "peer-relay 203.0.113.5:41641:vni:7" {
+		t.Errorf("peer relay reply = %+v", pr)
+	}
+	// A DERP reply that also names a peer relay keeps the DERP region.
+	dr := MapPing(&ipnstate.PingResult{PeerRelay: "203.0.113.5:41641:vni:7", DERPRegionID: 1, DERPRegionCode: "nyc"})
+	if dr.DERPRegionID != 1 || dr.DERPRegionCode != "nyc" {
+		t.Errorf("derp reply with peer relay = %+v", dr)
 	}
 }
 

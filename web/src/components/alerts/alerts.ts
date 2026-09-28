@@ -471,6 +471,21 @@ export function hasAlertFilters(f: AlertFilters): boolean {
   return f.severity !== 'all' || f.device !== '' || f.q.trim() !== ''
 }
 
+/**
+ * Filters seeded from a deep link (`?severity=critical` from the overview,
+ * `?device=<id>` from a device's "Alert history"). Params that are absent or
+ * invalid leave `base` untouched, so this never clears a user's own filter.
+ */
+export function alertFiltersFromSearch(sp: URLSearchParams, base: AlertFilters = DEFAULT_ALERT_FILTERS): AlertFilters {
+  const sev = sp.get('severity')
+  const device = sp.get('device')
+  return {
+    ...base,
+    severity: sev === 'critical' || sev === 'warning' || sev === 'info' ? sev : base.severity,
+    device: device ?? base.device,
+  }
+}
+
 /** Case-insensitive match on title, message, device name and rule type. */
 export function filterAlerts(alerts: ReadonlyArray<Alert>, f: AlertFilters): Alert[] {
   const q = f.q.trim().toLowerCase()

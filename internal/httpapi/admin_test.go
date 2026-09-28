@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/evilgenius79/fable-tailscale/internal/model"
 	"github.com/evilgenius79/fable-tailscale/internal/source"
+	"github.com/evilgenius79/fable-tailscale/internal/tsapi"
 )
 
 func TestAdminActionsNotConfigured(t *testing.T) {
@@ -213,6 +215,30 @@ func TestValidators(t *testing.T) {
 		_, err := validateName(n.in)
 		if (err == nil) != n.ok {
 			t.Errorf("validateName(%q) err = %v, want ok=%v", n.in, err, n.ok)
+		}
+	}
+}
+
+// TestAdminUpstreamMessages checks that only the (scrubbed) control API
+// error text reaches the caller; other upstream failures get a fixed message.
+func TestAdminUpstreamMessages(t *testing.T) {
+	h := newHarness(t, withAdminActions())
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{fmt.Errorf("tsapi: set authorized: %w", &tsapi.APIError{Status: 403, Message: "insufficient scope"}), "tailscale api: 403 Forbidden: insufficient scope"},
+		{errors.New("dial tcp 203.0.113.5:443: connect: network is unreachable"), "upstream request failed"},
+	} {
+		h.api.mu.Lock()
+		h.api.err = tc.err
+		h.api.mu.Unlock()
+		w := h.do("POST", "/api/v1/devices/laptop/authorize", map[string]bool{"authorized": true}, ipAdmin)
+		expect(t, w, http.StatusBadGateway, codeUpstream)
+		var eb errorBody
+		decode(t, w, &eb)
+		if eb.Error.Message != tc.want {
+			t.Errorf("err %v: message %q, want %q", tc.err, eb.Error.Message, tc.want)
 		}
 	}
 }

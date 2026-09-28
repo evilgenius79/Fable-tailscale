@@ -34,13 +34,14 @@ the package that implements it.
 
 ### 3.1 Network exposure
 
-* The hub listens on **its Tailscale IP only** (`--listen auto`). Nothing is
-  exposed on LAN or public interfaces unless you explicitly pass another
-  address. The container image and compose files keep that behaviour
-  (host networking or a tailscale sidecar; no `0.0.0.0`).
-* Agents behave the same and additionally **refuse** to bind a non-Tailscale,
-  non-loopback address unless `--insecure-listen-any` is given
-  (`cmd/tailwatch-agent`).
+* The hub listens on **its Tailscale IP only** (`--listen auto`) and
+  **refuses** to bind a non-Tailscale, non-loopback address (`0.0.0.0`, a LAN
+  IP) unless `--insecure-listen-any` is given (`internal/config`,
+  `internal/httpapi`); the error names the flag. The container image and
+  compose files keep that behaviour (host networking or a tailscale sidecar;
+  no `0.0.0.0`).
+* Agents behave the same: a non-Tailscale, non-loopback address is refused
+  unless `--insecure-listen-any` is given (`cmd/tailwatch-agent`).
 * Reachability is further governed by your **Tailscale ACL** — see
   `docs/DEPLOY.md` for a policy that only opens `8484` to members and `41820`
   to the hub.
@@ -105,15 +106,22 @@ request:
 * No inline scripts, no third-party assets: fonts and all JS ship inside the
   binary.
 
-DNS rebinding: an attacker's page cannot read responses (CSP/CORP/no CORS) and
-cannot write (header requirement); the `Origin`/`Host` check also rejects
-rebinding attempts that present a foreign origin.
+DNS rebinding: every `/api/` request must carry a `Host` header that names
+this hub (the listen address, its Tailscale IPs, its MagicDNS name, loopback
+when listening on loopback, or an entry from `--allowed-hosts`). A page on an
+attacker's domain whose DNS is re-pointed at the hub sends the attacker's
+domain as `Host` and is rejected with `403` before authentication, so the
+`Origin` comparison can never be satisfied by a rebound name. Independently,
+such a page cannot read responses (CSP/CORP/no CORS) and cannot write (custom
+header requirement).
 
 ### 3.5 Abuse resistance
 
 * Request bodies capped at 64 KiB and decoded into fixed, typed structs.
 * Server timeouts: read-header 10s, read 30s, idle 120s. SSE streams have no
-  write timeout but are per-identity rate limited.
+  write timeout but are capped at 8 concurrent streams per identity and 256
+  in total (`429`, `Retry-After: 5` beyond that), so one viewer cannot pin
+  the hub's goroutines and bus subscriptions.
 * Per-identity rate limit 20 req/s (burst 60) → `429`.
 * Agents: 10 req/s, 5s read timeout; the hub caps agent responses at 1 MiB
   and rejects reports with an unknown protocol major
@@ -173,21 +181,31 @@ for display (the UI renders text, never HTML).
 
 ### 3.10 Process and host hardening
 
-**systemd** (`deploy/systemd/*.service`, `systemd-analyze security` ≈ 1.3/1.5
+**systemd** (`deploy/systemd/*.service`, `systemd-analyze security` ≈ 1.2/1.5
 "OK"): dedicated users, `NoNewPrivileges`, empty `CapabilityBoundingSet`,
 `ProtectSystem=strict` (+ `StateDirectory` for the hub only), `ProtectHome`,
 `PrivateTmp`, `PrivateDevices`, `ProtectKernel{Tunables,Modules,Logs}`,
 `ProtectControlGroups`, `ProtectClock`, `ProtectHostname`, `ProtectProc`
-(hub), `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK`,
+(hub), `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX` (+ `AF_NETLINK`
+for the agent only),
 `SystemCallFilter=@system-service` minus `@privileged @resources`,
 `SystemCallArchitectures=native`, `RestrictNamespaces`, `RestrictRealtime`,
 `RestrictSUIDSGID`, `LockPersonality`, `MemoryDenyWriteExecute`, `RemoveIPC`,
 `UMask=0077`, memory/task limits, `EnvironmentFile` 0600.
 
-Why `AF_NETLINK`: Go's `net.Interfaces()` enumerates interfaces over netlink
-(needed for `--listen auto` and per-interface counters). It is read-only for
-an unprivileged user; drop it from the hub unit if you always pass an explicit
-`--listen`.
+Why `AF_NETLINK` only for the agent: the agent enumerates interfaces
+(gopsutil, over netlink) for the per-interface counters and Tailscale-IP
+detection. The hub never does — for `--listen auto` it asks `tailscaled` for
+its Tailscale IP over the LocalAPI socket (`internal/httpapi`) — so the hub
+unit does not grant netlink at all (verified under `strace`: only `AF_UNIX`
+and `AF_INET`/`AF_INET6` sockets are opened).
+
+Why **no** `tailscale set --operator=tailwatch`: `tailscaled` serves status,
+WhoIs and the disco-ping endpoint to any local user that can connect to its
+socket, so the hub runs with read-only LocalAPI access. Operator rights would
+additionally let it run `tailscale up/down/logout` and change routes or exit
+nodes; grant them only if your `tailscaled` build denies pings
+(`docs/DEPLOY.md`).
 
 **Container** (`deploy/docker/Dockerfile`): multi-stage build; final image is
 `gcr.io/distroless/static-debian12:nonroot` (no shell, no libc, uid 65532),
@@ -205,7 +223,13 @@ file adds `read_only`, `cap_drop: ALL`, `no-new-privileges`. The
 * Releases publish `SHA256SUMS` and **SLSA provenance attestations**
   (`actions/attest-build-provenance`) for binaries and the container image.
   Verify with `gh attestation verify <file> --owner evilgenius79` or
-  `gh attestation verify oci://ghcr.io/evilgenius79/tailwatch:vX.Y.Z --owner evilgenius79`.
+  `gh attestation verify oci://ghcr.io/evilgenius79/tailwatch:X.Y.Z --owner evilgenius79`
+  (image tags have no `v` prefix).
+* Every GitHub Action in the workflows is pinned to a full commit SHA (with
+  the version in a trailing comment so Dependabot keeps it current), and the
+  release itself is created with the `gh` CLI and the job's `GITHUB_TOKEN`
+  rather than a third-party action, so no floating tag can inject code into
+  the job that holds `contents: write` / `id-token: write`.
 * Install scripts never pipe into a root shell silently: they print the plan,
   require `--yes` when non-interactive, verify `SHA256SUMS`, and can install a
   local binary (`--binary`) for air-gapped hosts. Note that checksum

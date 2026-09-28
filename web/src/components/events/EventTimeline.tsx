@@ -61,24 +61,48 @@ export function EventTimeline({ groups, loading, fetching, error, onRetry, hasMo
 
   if (error) return <ErrorState error={error} onRetry={onRetry} />
   if (loading) return <SkeletonRows />
-  if (!groups.length) {
-    return filtering ? (
-      <EmptyState
-        icon={SearchX}
-        title="No events match"
-        description="Try a wider time window or remove a filter."
-        action={
-          <Button size="sm" onClick={onClearFilters}>
-            Clear filters
-          </Button>
-        }
-      />
-    ) : (
-      <EmptyState icon={Activity} title="No events yet" description="Device, alert and admin activity will show up here as it happens." />
-    )
-  }
 
   const total = groups.reduce((a, g) => a + g.events.length, 0)
+
+  // Keep the sentinel / "Load older" control when the loaded pages filtered to
+  // nothing but the hub still has history (the matches may be further back).
+  const footer = (
+    <div ref={sentinel} className="flex flex-col items-center gap-2 py-2 text-xs text-fg-muted">
+      {loadMoreError ? (
+        <ErrorState compact error={loadMoreError} onRetry={onLoadMore} retrying={loadingMore} className="w-full max-w-md" />
+      ) : hasMore ? (
+        <Button size="sm" variant="outline" onClick={onLoadMore} loading={loadingMore} leadingIcon={ChevronDown}>
+          Load older events
+        </Button>
+      ) : (
+        <p className="num">
+          Showing {formatInt(total)} {total === 1 ? 'event' : 'events'} · end of history
+        </p>
+      )}
+    </div>
+  )
+
+  if (!groups.length) {
+    return (
+      <div className="space-y-3">
+        {filtering ? (
+          <EmptyState
+            icon={SearchX}
+            title="No events match"
+            description={hasMore ? 'Nothing in the events loaded so far. Load older events, widen the time window or remove a filter.' : 'Try a wider time window or remove a filter.'}
+            action={
+              <Button size="sm" onClick={onClearFilters}>
+                Clear filters
+              </Button>
+            }
+          />
+        ) : (
+          <EmptyState icon={Activity} title="No events yet" description="Device, alert and admin activity will show up here as it happens." />
+        )}
+        {hasMore || loadMoreError ? footer : null}
+      </div>
+    )
+  }
 
   return (
     <div className={cn('space-y-5 transition-opacity duration-300', fetching && 'opacity-80')}>
@@ -98,19 +122,7 @@ export function EventTimeline({ groups, loading, fetching, error, onRetry, hasMo
           </ul>
         </section>
       ))}
-      <div ref={sentinel} className="flex flex-col items-center gap-2 py-2 text-xs text-fg-muted">
-        {loadMoreError ? (
-          <ErrorState compact error={loadMoreError} onRetry={onLoadMore} retrying={loadingMore} className="w-full max-w-md" />
-        ) : hasMore ? (
-          <Button size="sm" variant="outline" onClick={onLoadMore} loading={loadingMore} leadingIcon={ChevronDown}>
-            Load older events
-          </Button>
-        ) : (
-          <p className="num">
-            Showing {formatInt(total)} {total === 1 ? 'event' : 'events'} · end of history
-          </p>
-        )}
-      </div>
+      {footer}
     </div>
   )
 }

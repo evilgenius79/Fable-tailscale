@@ -7,9 +7,15 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/evilgenius79/fable-tailscale/internal/alerts"
+	"github.com/evilgenius79/fable-tailscale/internal/config"
+	"github.com/evilgenius79/fable-tailscale/internal/model"
 )
 
 func noEnv(string) string { return "" }
@@ -54,6 +60,12 @@ func freePort(t *testing.T) int {
 // TestRunDemo boots the hub in demo mode on a loopback port, checks the API
 // answers, then shuts it down cleanly via context cancellation.
 func TestRunDemo(t *testing.T) {
+	// A full day of demo backfill (~90k rows) takes tens of seconds under
+	// the race detector; an hour is plenty to exercise the same code path.
+	prev := demoBackfill
+	demoBackfill = time.Hour
+	t.Cleanup(func() { demoBackfill = prev })
+
 	port := freePort(t)
 	listen := fmt.Sprintf("127.0.0.1:%d", port)
 	dir := t.TempDir()
@@ -69,7 +81,9 @@ func TestRunDemo(t *testing.T) {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	base := "http://" + listen
-	deadline := time.Now().Add(30 * time.Second)
+	// Startup (store open, backfill, listen) and the first poll each get
+	// their own generous budget; CI runners are slow and may run under -race.
+	deadline := time.Now().Add(120 * time.Second)
 	var healthy bool
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(base + "/healthz")
@@ -92,6 +106,7 @@ func TestRunDemo(t *testing.T) {
 
 	// The HTTP server comes up concurrently with the collector's first poll,
 	// so wait until the overview reports devices.
+	deadline = time.Now().Add(60 * time.Second)
 	var ov struct {
 		Hub struct {
 			DemoMode bool `json:"demoMode"`
@@ -133,5 +148,47 @@ func TestRunDemo(t *testing.T) {
 		}
 	case <-time.After(20 * time.Second):
 		t.Fatal("hub did not shut down after cancellation")
+	}
+}
+
+// TestBuildNotifiersRefuseRedirects checks that the production notifier
+// client never follows a redirect: a redirecting endpoint must not make the
+// hub re-send the alert payload (or its signature/token) elsewhere.
+func TestBuildNotifiersRefuseRedirects(t *testing.T) {
+	var hits sync.Map
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Store(r.URL.Path, true)
+		if r.URL.Path == "/leaked" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Redirect(w, r, "/leaked", http.StatusTemporaryRedirect)
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		WebhookURL:      ts.URL + "/hook",
+		WebhookSecret:   "s3cret",
+		SlackWebhookURL: ts.URL + "/slack",
+		NtfyURL:         ts.URL + "/ntfy",
+		NtfyToken:       "tk_secret",
+	}
+	notifiers := buildNotifiers(cfg)
+	if len(notifiers) != 3 {
+		t.Fatalf("notifiers = %d, want 3", len(notifiers))
+	}
+	for _, n := range notifiers {
+		err := n.Send(context.Background(), alerts.Notification{Type: model.EventAlertOpened})
+		if err == nil || !strings.Contains(err.Error(), "307") {
+			t.Errorf("%s: expected a status 307 error, got %v", n.Name(), err)
+		}
+	}
+	if _, leaked := hits.Load("/leaked"); leaked {
+		t.Fatal("a notifier followed the redirect and re-sent the payload")
+	}
+	for _, p := range []string{"/hook", "/slack", "/ntfy"} {
+		if _, ok := hits.Load(p); !ok {
+			t.Errorf("%s was never called", p)
+		}
 	}
 }

@@ -110,7 +110,8 @@ export default function EventsPage() {
               <StatusDot tone={live.state === 'connected' ? 'online' : live.state === 'polling' ? 'warning' : 'neutral'} pulse={live.state === 'connected'} size="xs" />
               {live.state === 'connected' ? 'Streaming live' : live.state === 'polling' ? 'Polling every 15s' : 'Connecting…'}
             </span>
-            {!feed.isPending ? (
+            {/* Only worth a mention while filtering; otherwise the toolbar summary already shows the same count. */}
+            {!feed.isPending && filtering ? (
               <>
                 <span aria-hidden="true">·</span>
                 <span className="num">{formatInt(feed.loaded.length)} loaded</span>

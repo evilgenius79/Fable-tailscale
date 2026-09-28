@@ -324,7 +324,8 @@ func observeDisk(r *model.AlertRule, d *model.Device, ec evalContext) observatio
 }
 
 func observeLatency(r *model.AlertRule, d *model.Device, ec evalContext) observation {
-	if !d.Online || d.Connectivity.LatencyMs == nil {
+	c := &d.Connectivity
+	if !d.Online || c.LatencyMs == nil || c.LastPing == nil || ec.now.Sub(*c.LastPing) > latencyStaleAfter {
 		return observation{resolved: "Device offline or latency no longer measured"}
 	}
 	return numericObservation(r, d, ec, *d.Connectivity.LatencyMs, numericParams{
@@ -414,7 +415,14 @@ func observeAgent(r *model.AlertRule, d *model.Device, ec evalContext) observati
 		}
 		return observation{resolved: "Agent no longer polled"}
 	}
-	start := condStart(ec, *d.Agent.LastSuccess)
+	// The condition cannot have started before the device last came online:
+	// LastSuccess is carried through an offline period, and the ForSeconds
+	// grace must cover an agent still starting after a reboot.
+	upstream := *d.Agent.LastSuccess
+	if d.Uptime.LastChange != nil && d.Uptime.LastChange.After(upstream) {
+		upstream = *d.Uptime.LastChange
+	}
+	start := condStart(ec, upstream)
 	msg := fmt.Sprintf("Agent unreachable for %s (last success %s)",
 		humanDuration(ec.now.Sub(start)), clockTime(*d.Agent.LastSuccess, ec.now))
 	if d.Agent.LastError != "" {

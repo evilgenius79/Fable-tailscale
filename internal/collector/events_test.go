@@ -78,10 +78,15 @@ func TestEventsNewOnlineOfflinePath(t *testing.T) {
 func TestEventsUpdatedExpiredAuthorized(t *testing.T) {
 	h := newHarness(t, defaultCfg())
 	h.api.configured = true
-	h.api.setDevices(source.APIDevice{NodeID: "a", Name: "alpha.tail.ts.net", ClientVersion: "1.80.0", Authorized: false})
-	h.local.setStatus(hubStatus(peer("a", "alpha", "100.64.0.2", tags("tag:one"))))
+	// A device awaiting authorization is only known to the control API; it
+	// enters the netmap once an admin approves it.
+	h.api.setDevices(source.APIDevice{NodeID: "a", Name: "alpha.tail.ts.net", Hostname: "alpha", OS: "linux",
+		ClientVersion: "1.80.0", Authorized: false, Tags: []string{"tag:one"}, LastSeen: baseTime})
 	h.poll()
 	h.drainEvents()
+	if d := h.device("a"); d.Authorized {
+		t.Fatalf("api-only pending device must be unauthorized")
+	}
 
 	h.api.setDevices(source.APIDevice{NodeID: "a", Name: "alpha.tail.ts.net", ClientVersion: "1.82.0", Authorized: true})
 	h.local.setStatus(hubStatus(peer("a", "alpha", "100.64.0.2", tags("tag:one", "tag:two"), hostname("alpha-2"), osName("macOS"), expired())))

@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/evilgenius79/fable-tailscale/internal/agentproto"
@@ -127,6 +128,11 @@ type devState struct {
 	// missing counts consecutive polls in which the device was absent from
 	// every source. At removedAfterPolls the device is reported removed.
 	missing int
+	// lastBytesAt is when the device's hub<->peer byte counters were last
+	// read from the netmap; it is the baseline time for rate computation.
+	// Zero when the previous counters did not come from the netmap (new,
+	// API-only or removed device), which disables the rate for one poll.
+	lastBytesAt time.Time
 	// agent holds the backoff schedule and the previous report used for
 	// counter deltas.
 	agent agentState
@@ -162,12 +168,14 @@ type Collector struct {
 	ticks     *bus.Bus[model.Snapshot]
 	events    *bus.Bus[model.Event]
 	refresh   chan struct{}
+	forceAPI  atomic.Bool // next poll re-queries the control API regardless of APIInterval
 
-	// mu guards snap, hub and forgotten. It is never held during network or
-	// store calls.
+	// mu guards snap, hub, removed and forgotten. It is never held during
+	// network or store calls.
 	mu        sync.RWMutex
 	snap      model.Snapshot
 	hub       model.HubInfo
+	removed   map[model.DeviceID]bool // devices in snap that vanished from every source
 	forgotten map[model.DeviceID]bool // devices dropped by Forget since the last poll consumed them
 
 	// pollMu serializes polls; everything below it is poll-goroutine state.
@@ -175,7 +183,6 @@ type Collector struct {
 	loaded          bool // stored devices loaded into the snapshot
 	synced          bool // at least one successful Status() merge done
 	state           map[model.DeviceID]*devState
-	lastPoll        time.Time // last successful Status() merge; rate baseline
 	lastAPIAttempt  time.Time
 	lastAPIPoll     time.Time // last successful control API refresh
 	lastPingAttempt time.Time
@@ -210,6 +217,7 @@ func New(cfg Config, st *store.Store, local source.LocalSource, api source.Contr
 		refresh:   make(chan struct{}, 1),
 		state:     map[model.DeviceID]*devState{},
 		hubErrors: map[string]time.Time{},
+		removed:   map[model.DeviceID]bool{},
 		forgotten: map[model.DeviceID]bool{},
 	}
 	c.startedAt = c.now()
@@ -324,12 +332,38 @@ func (c *Collector) Ticks() *bus.Bus[model.Snapshot] { return c.ticks }
 func (c *Collector) Events() *bus.Bus[model.Event] { return c.events }
 
 // RefreshNow requests an immediate poll from Run. It never blocks; requests
-// that arrive while one is already pending are coalesced.
+// that arrive while one is already pending are coalesced. The triggered
+// poll re-queries the control API even when APIInterval has not elapsed,
+// so a refresh after an administrative change (authorize, tags, routes,
+// key expiry, delete) does not keep serving the cached API row. Callers
+// that need the refreshed device in hand should use Refresh instead.
 func (c *Collector) RefreshNow() {
+	c.forceAPI.Store(true)
 	select {
 	case c.refresh <- struct{}{}:
 	default:
 	}
+}
+
+// Refresh runs one poll synchronously with the control API re-queried
+// regardless of APIInterval, and returns when the new snapshot has been
+// published. It is meant for callers that must return the post-action
+// state of a device, such as admin handlers. Polls are serialized, so
+// Refresh waits for an in-flight poll to finish first.
+func (c *Collector) Refresh(ctx context.Context) error {
+	c.forceAPI.Store(true)
+	return c.PollOnce(ctx)
+}
+
+// Removed reports whether the device is kept in the snapshot only because
+// it was once known: it vanished from every source (netmap and control
+// API) and is reported offline until it reappears or is forgotten. The
+// alert engine uses it to resolve alerts of decommissioned devices rather
+// than reporting them offline forever.
+func (c *Collector) Removed(id model.DeviceID) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.removed[id]
 }
 
 // Snapshot returns a copy of the latest in-memory snapshot. The devices
@@ -520,6 +554,7 @@ func (c *Collector) Forget(ctx context.Context, id model.DeviceID) error {
 	}
 	c.mu.Lock()
 	c.snap.Devices = slices.DeleteFunc(slices.Clone(c.snap.Devices), func(x model.Device) bool { return x.ID == d.ID })
+	delete(c.removed, d.ID)
 	c.forgotten[d.ID] = true
 	c.mu.Unlock()
 	c.log.Info("collector: device forgotten", "device", d.ID, "name", d.Name)

@@ -159,12 +159,13 @@ export function serializeEventFilters(f: EventFilters): URLSearchParams {
 }
 
 /**
- * Server-side parameters for a filter set. The endpoint takes one `type`,
- * so several selected types are filtered client-side instead.
+ * Server-side parameters for a filter set. `type` accepts a comma-separated
+ * list (docs/API.md), so every selected type is sent and the page is already
+ * narrowed by the hub; severity and free text are filtered client-side.
  */
 export function eventQueryParams(f: EventFilters, limit: number, now: number = Date.now()): EventsParams {
   const p: EventsParams = { limit }
-  if (f.types.length === 1) p.type = f.types[0]
+  if (f.types.length) p.type = f.types.join(',')
   if (f.device) p.device = f.device
   const since = sinceISO(f.since, now)
   if (since) p.since = since
@@ -210,6 +211,19 @@ export function oldestTs(events: ReadonlyArray<Event>): string | undefined {
   let min: string | undefined
   for (const e of events) if (min === undefined || e.ts < min) min = e.ts
   return min
+}
+
+/**
+ * `before` value for the next older page. The hub stores timestamps at second
+ * resolution and treats `before` as strictly exclusive, so asking for
+ * `ts < oldest` would skip every event that shares the oldest event's second
+ * (hub start, alert + audit pairs). Ask for `ts < oldest + 1s` instead and
+ * let the id-based dedupe drop the ones already loaded.
+ */
+export function beforeCursor(oldest: string): string {
+  const t = Date.parse(oldest)
+  if (Number.isNaN(t)) return oldest
+  return new Date(t + 1000).toISOString()
 }
 
 export interface EventDayGroup {

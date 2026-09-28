@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/evilgenius79/fable-tailscale/internal/model"
 	"github.com/evilgenius79/fable-tailscale/internal/source"
+	"github.com/evilgenius79/fable-tailscale/internal/tslocal"
 )
 
 func TestReadEndpoints(t *testing.T) {
@@ -420,9 +422,30 @@ func TestPing(t *testing.T) {
 		t.Errorf("expected ping error, got %+v", res)
 	}
 	expect(t, h.do("POST", "/api/v1/devices/ghost/ping", nil, ipViewer), 404, codeNotFound)
-	// A LocalAPI failure (not a ping timeout) is an upstream error.
-	h.local.mu.Lock()
-	h.local.pingErr = errors.New("localapi: connection refused")
-	h.local.mu.Unlock()
-	expect(t, h.do("POST", "/api/v1/devices/laptop/ping", nil, ipViewer), http.StatusBadGateway, codeUpstream)
+	// A LocalAPI failure (not a ping timeout) is an upstream error whose
+	// operator-facing details (socket path, hints) never reach the caller.
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{fmt.Errorf("tslocal: ping 100.64.0.2: %w at /var/run/tailscale/tailscaled.sock (hint: run as root): %w", tslocal.ErrDaemonUnavailable, errors.New("dial unix: no such file")), "tailscaled is unavailable on the hub"},
+		{fmt.Errorf("tslocal: ping 100.64.0.2: %w (hint: add the user to the socket group): %w", tslocal.ErrPermissionDenied, errors.New("permission denied")), "tailscaled is unavailable on the hub"},
+		{errors.New("localapi: connection refused to /run/secret.sock"), "upstream request failed"},
+	} {
+		h.local.mu.Lock()
+		h.local.pingErr = tc.err
+		h.local.mu.Unlock()
+		w := h.do("POST", "/api/v1/devices/laptop/ping", nil, ipViewer)
+		expect(t, w, http.StatusBadGateway, codeUpstream)
+		var eb errorBody
+		decode(t, w, &eb)
+		if eb.Error.Message != tc.want {
+			t.Errorf("ping error %v: message %q, want %q", tc.err, eb.Error.Message, tc.want)
+		}
+		for _, leak := range []string{".sock", "hint", "permission"} {
+			if strings.Contains(w.Body.String(), leak) {
+				t.Errorf("ping error body leaks %q: %s", leak, w.Body.String())
+			}
+		}
+	}
 }

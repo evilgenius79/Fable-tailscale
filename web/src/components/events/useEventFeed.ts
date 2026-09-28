@@ -2,16 +2,20 @@
 //
 // The newest page comes from `useEvents()` (kept fresh by the SSE stream and
 // the polling fallback). Older pages are fetched on demand with a `before`
-// cursor (the oldest timestamp loaded so far) and merged client-side; pages
-// are deduplicated by id so a server that ignores `before` simply reports
-// "no more events" instead of looping.
+// cursor (the oldest timestamp loaded so far plus one second, because the hub
+// stores second-resolution timestamps and `before` is exclusive; see
+// `beforeCursor`) and merged client-side; pages are deduplicated by id so the
+// overlap is dropped and a server that ignores `before` simply reports "no
+// more events" instead of looping. Residual edge: a single second holding
+// more than a page of already-loaded events ends the feed there (an id cursor
+// on the API would be the complete fix).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiGet } from '../../api/client'
 import { useEvents } from '../../api/hooks'
 import type { EventsParams } from '../../api/queryKeys'
 import type { Event } from '../../api/types'
-import { eventQueryParams, filterEvents, mergeEvents, oldestTs, type EventFilters } from './events'
+import { beforeCursor, eventQueryParams, filterEvents, mergeEvents, oldestTs, type EventFilters } from './events'
 
 export const EVENT_PAGE_SIZE = 100
 
@@ -75,7 +79,7 @@ export function useEventFeed(filters: EventFilters, pageSize = EVENT_PAGE_SIZE):
     abortRef.current = ac
     setLoadingMore(true)
     setLoadMoreError(null)
-    apiGet<Event[]>('/events', { params: { ...params, before: cursor }, signal: ac.signal })
+    apiGet<Event[]>('/events', { params: { ...params, before: beforeCursor(cursor) }, signal: ac.signal })
       .then((page) => {
         if (ac.signal.aborted) return
         const fresh = (Array.isArray(page) ? page : []).filter((e) => !known.has(e.id))

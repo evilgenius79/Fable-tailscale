@@ -12,6 +12,10 @@ export interface KeyValueItem {
   /** Span both columns in 2-column layouts. */
   span?: boolean
   hint?: string
+  /** Let a long free-text value (error messages, paths) wrap onto several lines instead of truncating. */
+  wrap?: boolean
+  /** Tooltip for the value; defaults to the value itself when it is a plain string (so truncated text stays readable). */
+  title?: string
 }
 
 export interface KeyValueListProps {
@@ -36,7 +40,7 @@ export function KeyValueList({ items, columns = 1, dense, divided = true, classN
       )}
     >
       {items.map((it, i) => (
-        <KeyValue key={i} label={it.key} mono={it.mono} copy={it.copy} hint={it.hint} dense={dense} divided={divided} className={cn(it.span && 'sm:col-span-full')}>
+        <KeyValue key={i} label={it.key} mono={it.mono} copy={it.copy} hint={it.hint} wrap={it.wrap} title={it.title} dense={dense} divided={divided} className={cn(it.span && 'sm:col-span-full')}>
           {it.value}
         </KeyValue>
       ))}
@@ -50,19 +54,24 @@ export interface KeyValueProps {
   mono?: boolean
   copy?: string
   hint?: string
+  wrap?: boolean
+  title?: string
   dense?: boolean
   divided?: boolean
   className?: string
 }
 
-export function KeyValue({ label, children, mono, copy, hint, dense, divided = true, className }: KeyValueProps) {
+export function KeyValue({ label, children, mono, copy, hint, wrap, title, dense, divided = true, className }: KeyValueProps) {
+  const valueTitle = title ?? (typeof children === 'string' ? children : undefined)
   return (
     <div className={cn('group flex min-w-0 items-baseline justify-between gap-4', divided && 'border-b border-border-subtle last:border-b-0', dense ? 'py-1.5' : 'py-2', className)}>
       <dt className="shrink-0 text-[13px] text-fg-muted" title={hint}>
         {label}
       </dt>
       <dd className={cn('flex min-w-0 items-center gap-1 text-right text-[13px] text-fg', mono && 'font-mono text-xs')}>
-        <span className="min-w-0 truncate">{children ?? <span className="text-fg-faint">—</span>}</span>
+        <span className={cn('min-w-0', wrap ? 'whitespace-normal break-words [overflow-wrap:anywhere]' : 'truncate')} title={wrap ? undefined : valueTitle}>
+          {children ?? <span className="text-fg-faint">—</span>}
+        </span>
         {copy ? <CopyButton value={copy} size="xs" className="opacity-0 group-hover:opacity-100 focus:opacity-100" /> : null}
       </dd>
     </div>

@@ -41,7 +41,7 @@ function Principals({ title, list, kind, hint }: { title: string; list: Readonly
     <div className="min-w-0 rounded-lg border border-border p-3">
       <p className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">{title}</p>
       <div className="mt-1.5">{body}</div>
-      <p className="mt-1.5 text-[11px] text-fg-faint">{hint}</p>
+      <p className="mt-1.5 text-[11px] text-fg-muted">{hint}</p>
     </div>
   )
 }

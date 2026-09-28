@@ -3,6 +3,7 @@ import type { Device, TopologyEdge, TopologyNode } from '../../api/types'
 import {
   aggregateDerp,
   clampZoom,
+  counterScale,
   edgePathLabel,
   edgeWidth,
   filterTopology,
@@ -151,6 +152,11 @@ describe('geometry', () => {
     expect(100 * z.k + z.y).toBeCloseTo(100)
     expect(clampZoom(10)).toBe(4)
     expect(clampZoom(0.01)).toBe(0.25)
+  })
+  it('counter-scales labels only when zoomed in', () => {
+    expect(counterScale(2)).toBe(0.5)
+    expect(counterScale(1)).toBe(1)
+    expect(counterScale(0.5)).toBe(1)
   })
   it('labels edge paths', () => {
     expect(edgePathLabel('relay', 'fra')).toBe('Relay via fra')

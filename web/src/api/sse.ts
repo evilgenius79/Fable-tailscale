@@ -29,8 +29,9 @@ function parse<T>(ev: MessageEvent): T | null {
   }
 }
 
-function eventMatches(params: EventsParams, e: Event): boolean {
-  if (params.type && params.type !== e.type) return false
+/** Does a live event belong in the cached list for `params`? `type` may be a comma-separated list. Exported for tests. */
+export function eventMatches(params: EventsParams, e: Event): boolean {
+  if (params.type && !params.type.split(',').includes(e.type)) return false
   if (params.device && params.device !== e.deviceId) return false
   return true
 }
@@ -93,6 +94,7 @@ function toastForEvent(e: Event) {
   toast({ id: `event-${e.id}`, tone: e.severity === 'critical' ? 'error' : 'warning', title: e.title, description: e.message })
 }
 
+/** Toast ids are `alert-<id>`; the ack mutations use the same id so the actor sees one toast, not two. */
 function toastForAlert(a: Alert) {
   if (a.state === 'resolved') {
     toast({ id: `alert-${a.id}`, tone: 'success', title: `Resolved: ${a.title}`, description: a.deviceName })

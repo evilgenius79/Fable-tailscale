@@ -289,7 +289,9 @@ func insertRollupRow(t *testing.T, s *Store, id string, bucket, samples int64, o
 func TestQuerySeriesRollups(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t, "")
-	// Raw samples in range must be ignored for > 48h ranges.
+	// Raw samples already covered by a rollup bucket are ignored for > 48h
+	// ranges (the series is served from the rollups up to the device's
+	// newest bucket).
 	if err := s.InsertSamples(ctx, []model.Sample{{DeviceID: "d1", TS: at(0), Online: true, CPU: fp(99)}}); err != nil {
 		t.Fatal(err)
 	}
@@ -362,6 +364,86 @@ func TestQuerySeriesRollups(t *testing.T) {
 	}
 	if want := 30.0 / 65.0; math.Abs(ser.Points[0].Online-want) > 1e-9 {
 		t.Errorf("30d online = %v, want %v", ser.Points[0].Online, want)
+	}
+}
+
+// TestQuerySeriesRollupsRawTail: a rollup-sourced series must also cover the
+// raw samples newer than the rollups (the hour or two before now that
+// maintenance has not rolled up yet), and the partial bucket at the watermark
+// must be rebuilt from raw rather than taken from the stale rollup.
+func TestQuerySeriesRollupsRawTail(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t, "")
+	const day = 24 * 3600
+	// 100 samples at 15s from +0: online until +1000, offline afterwards.
+	var samples []model.Sample
+	for ts := int64(0); ts < 1500; ts += 15 {
+		samples = append(samples, model.Sample{DeviceID: "d1", TS: at(ts), Online: ts < 1000, CPU: fp(50)})
+	}
+	if err := s.InsertSamples(ctx, samples); err != nil {
+		t.Fatal(err)
+	}
+	// Roll up everything before +1000: buckets +0, +300, +600 are complete,
+	// +900 is partial (7 online samples) and the watermark points at it.
+	if _, err := s.Rollup(ctx, at(1000)); err != nil {
+		t.Fatal(err)
+	}
+
+	ser, err := s.QuerySeries(ctx, "d1", at(0), at(7*day))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ser.Source != SourceRollup || ser.StepSec != 300 {
+		t.Fatalf("7d series = %s/%d", ser.Source, ser.StepSec)
+	}
+	if len(ser.Points) != 5 {
+		t.Fatalf("7d series has %d points, want 5 (3 rollups + 2 raw buckets): %+v", len(ser.Points), ser.Points)
+	}
+	wantOnline := []float64{1, 1, 1, 7.0 / 20.0, 0}
+	for i, p := range ser.Points {
+		if p.T != base+int64(i)*300 {
+			t.Errorf("point %d T = %d, want %d", i, p.T, base+int64(i)*300)
+		}
+		if math.Abs(p.Online-wantOnline[i]) > 1e-9 {
+			t.Errorf("point %d online = %v, want %v", i, p.Online, wantOnline[i])
+		}
+		if p.CPU == nil || *p.CPU != 50 {
+			t.Errorf("point %d cpu = %v, want 50", i, p.CPU)
+		}
+	}
+
+	// 10d: everything lands in one 1800s bucket, weighted by sample count
+	// across the rollup/raw boundary (67 of 100 samples online).
+	ser, err = s.QuerySeries(ctx, "d1", at(0), at(10*day))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ser.Points) != 1 || ser.Points[0].T != base {
+		t.Fatalf("10d series = %+v", ser.Points)
+	}
+	if got := ser.Points[0].Online; math.Abs(got-0.67) > 1e-9 {
+		t.Errorf("10d online = %v, want 0.67", got)
+	}
+
+	// A device without rollups is served entirely from raw samples.
+	if err := s.InsertSamples(ctx, []model.Sample{{DeviceID: "d2", TS: at(1200), Online: true}}); err != nil {
+		t.Fatal(err)
+	}
+	ser, err = s.QuerySeries(ctx, "d2", at(0), at(7*day))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ser.Points) != 1 || ser.Points[0].T != base+1200 || ser.Points[0].Online != 1 {
+		t.Errorf("raw-only device series = %+v", ser.Points)
+	}
+
+	// A range that starts after the boundary only reads raw samples.
+	ser, err = s.QuerySeries(ctx, "d1", at(1200), at(1200+7*day))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ser.Points) != 1 || ser.Points[0].T != base+1200 {
+		t.Errorf("post-boundary series = %+v", ser.Points)
 	}
 }
 

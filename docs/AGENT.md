@@ -48,7 +48,7 @@ Allow-list flags are repeatable:
 tailwatch-agent --allow-tag tag:tailwatch-hub --allow-user alice@example.com --allow-node hub
 ```
 
-`--allow-node` takes MagicDNS names (base name or FQDN).
+`--allow-node` takes MagicDNS names (base name or FQDN). A bare base name matches only a node in this device's own tailnet (the local MagicDNS suffix); to allow a node shared in from another tailnet, give its full name.
 
 Recommended setups:
 
@@ -67,8 +67,11 @@ write endpoints.
 ## Flags and environment
 
 Every flag can be given as `TAILWATCH_AGENT_<FLAG>` (upper-case, `-` → `_`).
-Flags override the environment. Repeatable flags accept comma-separated values
-in the environment.
+Flags override the environment, with one exception: the repeatable
+`--allow-user` / `--allow-tag` / `--allow-node` flags are **added to** the
+values from `TAILWATCH_AGENT_ALLOW_*`, so an allow-list split between
+`agent.env` and `TAILWATCH_AGENT_OPTS` is the union of both. Repeatable flags
+accept comma-separated values in the environment.
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
@@ -76,12 +79,15 @@ in the environment.
 | `--port` | `TAILWATCH_AGENT_PORT` | `41820` | Port used by `auto`. Must match the hub's `--agent-port`. |
 | `--auth` | `TAILWATCH_AGENT_AUTH` | `whois` | `whois`, `token` or `both`. |
 | *(none)* | `TAILWATCH_AGENT_TOKEN` | – | Shared secret for `token`/`both`. **Environment only** — never a flag, so it does not show in `ps`. |
-| `--allow-user` | `TAILWATCH_AGENT_ALLOW_USER` | – | Login names allowed (repeatable). |
-| `--allow-tag` | `TAILWATCH_AGENT_ALLOW_TAG` | – | Tags allowed (repeatable). |
-| `--allow-node` | `TAILWATCH_AGENT_ALLOW_NODE` | – | MagicDNS node names allowed (repeatable). |
+| `--allow-user` | `TAILWATCH_AGENT_ALLOW_USER` | – | Login names allowed (repeatable; env and flag values are combined). |
+| `--allow-tag` | `TAILWATCH_AGENT_ALLOW_TAG` | – | Tags allowed (repeatable; combined). |
+| `--allow-node` | `TAILWATCH_AGENT_ALLOW_NODE` | – | MagicDNS node names allowed (repeatable; combined). |
 | `--interval` | `TAILWATCH_AGENT_INTERVAL` | `5s` | Sampling interval. |
 | `--socket` | `TAILWATCH_AGENT_SOCKET` | platform default | tailscaled LocalAPI socket path. |
 | `--insecure-listen-any` | `TAILWATCH_AGENT_INSECURE_LISTEN_ANY` | `false` | Allow binding a non-Tailscale address. Do not use outside tests. |
+| `--log-level` | `TAILWATCH_AGENT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
+| `--log-json` | `TAILWATCH_AGENT_LOG_JSON` | `false` | JSON log lines instead of text. Logs go to stderr (`journalctl -u tailwatch-agent`). |
+| `--version` | *(none)* | – | Print the version and exit. |
 
 Run `tailwatch-agent --help` for the authoritative list of your version.
 

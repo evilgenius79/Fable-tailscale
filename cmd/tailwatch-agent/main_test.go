@@ -49,9 +49,10 @@ func TestLocalStateCachesAndDerives(t *testing.T) {
 		}
 		return &source.LocalStatus{
 			Version: "1.102.5", BackendState: "Running",
-			TailscaleIPs: []string{"100.64.0.1", "fd7a:115c:a1e0::1"},
-			Health:       []string{"warn"},
-			Self:         source.LocalPeer{UserLogin: "alice@example.com"},
+			TailscaleIPs:   []string{"100.64.0.1", "fd7a:115c:a1e0::1"},
+			Health:         []string{"warn"},
+			MagicDNSSuffix: "example.ts.net",
+			Self:           source.LocalPeer{UserLogin: "alice@example.com"},
 		}, nil
 	}}
 	st := newLocalState(fs, 60*time.Second, quietLog())
@@ -60,6 +61,9 @@ func TestLocalStateCachesAndDerives(t *testing.T) {
 
 	if got := st.ownerLogin(ctx); got != "alice@example.com" || fs.calls != 1 {
 		t.Fatalf("owner = %q calls=%d", got, fs.calls)
+	}
+	if got := st.identity(ctx); got != (localIdentity{Owner: "alice@example.com", MagicDNSSuffix: "example.ts.net"}) || fs.calls != 1 {
+		t.Fatalf("identity = %+v calls=%d", got, fs.calls)
 	}
 	st.ownerLogin(ctx)
 	clock.advance(30 * time.Second)
@@ -91,6 +95,9 @@ func TestLocalStateCachesAndDerives(t *testing.T) {
 	cold := newLocalState(fs, time.Minute, quietLog())
 	if got := cold.ownerLogin(ctx); got != "" {
 		t.Fatalf("cold owner = %q", got)
+	}
+	if got := cold.identity(ctx); got != (localIdentity{}) {
+		t.Fatalf("cold identity = %+v", got)
 	}
 	if _, err := cold.tailscaleInfo(ctx); err == nil {
 		t.Fatal("expected error from cold failing state")

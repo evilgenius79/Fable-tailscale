@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/evilgenius79/fable-tailscale/internal/model"
 	"github.com/evilgenius79/fable-tailscale/internal/source"
+	"github.com/evilgenius79/fable-tailscale/internal/store"
 )
 
 // pingOutcome is the result of one disco ping.
@@ -69,7 +72,10 @@ func (c *Collector) PollOnce(ctx context.Context) error {
 	}
 
 	var errs []string
-	if c.apiConfigured() && c.due(now, c.lastAPIAttempt, c.cfg.APIInterval) {
+	// A forced refresh (RefreshNow/Refresh after an admin action) must not
+	// keep serving the cached API rows until APIInterval elapses.
+	forceAPI := c.forceAPI.Swap(false)
+	if c.apiConfigured() && (forceAPI || c.due(now, c.lastAPIAttempt, c.cfg.APIInterval)) {
 		c.lastAPIAttempt = now
 		devs, err := c.api.Devices(ctx)
 		switch {
@@ -99,14 +105,10 @@ func (c *Collector) PollOnce(ctx context.Context) error {
 		return err
 	}
 
-	var rateDT float64
-	if !c.lastPoll.IsZero() {
-		rateDT = now.Sub(c.lastPoll).Seconds()
-	}
-
 	polled := make([]polledDevice, 0, len(entries)+len(prev))
 	var events []model.Event
 	seen := make(map[model.DeviceID]bool, len(entries))
+	removed := make(map[model.DeviceID]bool)
 	var self *model.Device
 	for i := range entries {
 		e := &entries[i]
@@ -115,10 +117,28 @@ func (c *Collector) PollOnce(ctx context.Context) error {
 		st.missing = 0
 		p := prevByID[e.id]
 
+		// Rates are computed over the time since this device's counters
+		// were last read, not since the last poll: a device carried through
+		// polls it was absent from would otherwise report its whole delta
+		// against a single interval.
+		var rateDT float64
+		if e.local != nil && !st.lastBytesAt.IsZero() {
+			rateDT = now.Sub(st.lastBytesAt).Seconds()
+		}
 		d := c.mergeDevice(now, status, e, p, rateDT)
+		if e.local != nil {
+			st.lastBytesAt = now
+		} else {
+			st.lastBytesAt = time.Time{}
+		}
 		pd := polledDevice{}
 		if po, ok := pingResults[e.id]; ok {
 			pd.pinged = applyPing(now, &d, po)
+			if !pd.pinged {
+				// The scheduled ping failed: the carried latency no longer
+				// describes the link. LastPing stays for display.
+				d.Connectivity.LatencyMs = nil
+			}
 		}
 		var out *agentOutcome
 		if ao, ok := agentResults[e.id]; ok {
@@ -155,26 +175,27 @@ func (c *Collector) PollOnce(ctx context.Context) error {
 			// source knows was removed while the hub was down. Keep the
 			// row, mark it offline, but do not replay a removal event.
 			st.missing = removedAfterPolls
+			st.lastBytesAt = time.Time{}
 			c.markRemoved(now, &d)
 		case st.missing < removedAfterPolls:
 			st.missing++
 			if st.missing == removedAfterPolls {
+				st.lastBytesAt = time.Time{}
 				c.markRemoved(now, &d)
 				events = append(events, removedEvent(now, &d, removedAfterPolls))
 			}
+		}
+		if st.missing >= removedAfterPolls {
+			removed[d.ID] = true
 		}
 		c.finishUptime(now, p, &d)
 		polled = append(polled, polledDevice{dev: d})
 	}
 	c.synced = true
-	c.lastPoll = now
 
 	// Devices forgotten while this poll was running must not be written
 	// back; if a source still reports one it returns next poll as new.
-	forgotten := c.takeForgotten()
-	for id := range forgotten {
-		delete(c.state, id)
-	}
+	forgotten := c.consumeForgotten(ctx)
 
 	devices := make([]model.Device, 0, len(polled))
 	samples := make([]model.Sample, 0, len(polled))
@@ -187,10 +208,6 @@ func (c *Collector) PollOnce(ctx context.Context) error {
 	}
 	sortDevices(devices)
 
-	hub := c.buildHub(now, status, self, errs)
-	overview := c.buildOverview(ctx, now, devices, hub)
-	snap := model.Snapshot{Overview: overview, Devices: devices}
-
 	var persistErr error
 	if err := c.st.UpsertDevices(ctx, devices); err != nil {
 		persistErr = errors.Join(persistErr, fmt.Errorf("collector: persist devices: %w", err))
@@ -202,7 +219,23 @@ func (c *Collector) PollOnce(ctx context.Context) error {
 		c.log.Warn("collector: persistence failed", "err", persistErr)
 	}
 
-	c.publish(snap, hub)
+	// A Forget that ran between the check above and UpsertDevices has
+	// already deleted its row, which the upsert just wrote back:
+	// consumeForgotten deletes it again; keep the device out of this
+	// snapshot too.
+	if late := c.consumeForgotten(ctx); len(late) > 0 {
+		maps.Copy(forgotten, late)
+		devices = slices.DeleteFunc(devices, func(d model.Device) bool { return late[d.ID] })
+	}
+	for id := range forgotten {
+		delete(removed, id)
+	}
+
+	hub := c.buildHub(now, status, self, errs)
+	overview := c.buildOverview(ctx, now, devices, hub)
+	snap := model.Snapshot{Overview: overview, Devices: devices}
+
+	c.publish(snap, hub, removed)
 	for _, e := range events {
 		if forgotten[e.DeviceID] {
 			continue
@@ -228,6 +261,7 @@ func (c *Collector) degradedPoll(ctx context.Context, now time.Time, prev []mode
 	for i, d := range prev {
 		d.Connectivity.Path = model.PathUnknown
 		d.Connectivity.Relay = ""
+		d.Connectivity.LatencyMs = nil // measured through the daemon we cannot reach
 		d.Connectivity.RxRate = 0
 		d.Connectivity.TxRate = 0
 		d.UpdatedAt = now
@@ -239,7 +273,10 @@ func (c *Collector) degradedPoll(ctx context.Context, now time.Time, prev []mode
 	hub.LastPoll = now
 	hub.LastError = "tailscaled: " + msg
 	overview := c.buildOverview(ctx, now, devices, hub)
-	c.publish(model.Snapshot{Overview: overview, Devices: devices}, hub)
+	c.mu.RLock()
+	removed := maps.Clone(c.removed)
+	c.mu.RUnlock()
+	c.publish(model.Snapshot{Overview: overview, Devices: devices}, hub, removed)
 	if c.shouldEmitHubError(now, msg) {
 		c.Emit(ctx, hubErrorEvent(now, msg))
 	}
@@ -330,12 +367,48 @@ func (c *Collector) shouldEmitHubError(now time.Time, msg string) bool {
 	return true
 }
 
-// publish installs a new snapshot and hub info under the write lock.
-func (c *Collector) publish(snap model.Snapshot, hub model.HubInfo) {
+// publish installs a new snapshot, hub info and removed set under the
+// write lock. Devices forgotten since the poll last consumed the forgotten
+// set are dropped here so a Forget that raced with the tail of a poll never
+// reappears in the published snapshot; the next poll cleans up their
+// bookkeeping.
+func (c *Collector) publish(snap model.Snapshot, hub model.HubInfo, removed map[model.DeviceID]bool) {
+	if removed == nil {
+		removed = map[model.DeviceID]bool{}
+	}
 	c.mu.Lock()
+	if len(c.forgotten) > 0 {
+		snap.Devices = slices.DeleteFunc(slices.Clone(snap.Devices), func(d model.Device) bool { return c.forgotten[d.ID] })
+		for id := range c.forgotten {
+			delete(removed, id)
+		}
+	}
 	c.snap = snap
 	c.hub = hub
+	c.removed = removed
 	c.mu.Unlock()
+}
+
+// consumeForgotten takes the set of devices forgotten since the last call
+// and drops their poll-to-poll bookkeeping and cached control API rows, so
+// a forgotten device only returns when a source reports it again. It also
+// deletes their stored rows once more: Forget deletes the row itself, but
+// a poll's UpsertDevices may have written it back in between (the row is
+// gone from the snapshot either way, so this is cheap insurance against a
+// restart resurrecting it). The result is never nil.
+func (c *Collector) consumeForgotten(ctx context.Context) map[model.DeviceID]bool {
+	forgotten := c.takeForgotten()
+	if forgotten == nil {
+		return map[model.DeviceID]bool{}
+	}
+	for id := range forgotten {
+		delete(c.state, id)
+		if err := c.st.DeleteDevice(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) && ctx.Err() == nil {
+			c.log.Warn("collector: deleting forgotten device failed", "device", id, "err", err)
+		}
+	}
+	c.apiDevices = slices.DeleteFunc(c.apiDevices, func(ad source.APIDevice) bool { return forgotten[ad.NodeID] })
+	return forgotten
 }
 
 // pingAll disco-pings every online, non-self netmap peer with a Tailscale

@@ -69,9 +69,10 @@ COPY --from=build --chown=65532:65532 /out/data /data
 ENV TAILWATCH_DATA_DIR=/data \
     TAILWATCH_LOG_JSON=true
 VOLUME ["/data"]
-# The hub binds its Tailscale IP (see --listen); with --listen 0.0.0.0:8484 it
-# would accept non-tailnet traffic, so prefer network_mode: host or a tailscale
-# sidecar sharing the network namespace.
+# The hub binds its Tailscale IP (see --listen) and refuses any other
+# non-loopback address (0.0.0.0, a LAN IP) unless --insecure-listen-any is
+# given, so run it with network_mode: host or a tailscale sidecar sharing the
+# network namespace instead of publishing this port.
 EXPOSE 8484
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/tailwatch"]

@@ -135,7 +135,7 @@ const ACTION_LABELS: Record<string, string> = {
   'device.delete': 'Delete device',
   'device.ping': 'Ping device',
   'alert.ack': 'Acknowledge alert',
-  'rule.save': 'Save rule',
+  'rule.update': 'Update rule',
   'alerts.test': 'Test notification',
   refresh: 'Refresh',
 }
@@ -155,8 +155,8 @@ export function auditActionLabel(action: string): string {
 export function auditTargetLink(entry: Pick<AuditEntry, 'action' | 'target'>): string | undefined {
   if (!entry.target) return undefined
   if (entry.action.startsWith('device.')) return `/devices/${encodeURIComponent(entry.target)}`
-  if (entry.action === 'rule.save') return `/alerts?tab=rules&rule=${encodeURIComponent(entry.target)}`
-  if (entry.action === 'alert.ack') return '/alerts?tab=all'
+  if (entry.action === 'rule.update') return `/alerts?tab=rules&rule=${encodeURIComponent(entry.target)}`
+  if (entry.action === 'alert.ack') return '/alerts?tab=open'
   return undefined
 }
 

@@ -32,7 +32,8 @@ function AgentCard({ device }: { device: Device }) {
     { key: 'Agent version', value: a.version ?? '—', mono: true },
     { key: 'Endpoint', value: a.url ?? '—', mono: true, copy: a.url },
     { key: 'Last success', value: a.lastSuccess ? formatRelative(a.lastSuccess) : '—', hint: a.lastSuccess ? formatDateTime(a.lastSuccess) : undefined },
-    { key: 'Last error', value: a.lastError ? <span className="text-critical">{a.lastError}</span> : '—' },
+    // Raw agent errors can be long ("dial tcp 100.64.0.7:41820: connection refused"): wrap instead of truncating.
+    { key: 'Last error', value: a.lastError ? <span className="text-critical">{a.lastError}</span> : '—', wrap: true },
   ]
   return (
     <Card>

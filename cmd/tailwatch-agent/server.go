@@ -40,9 +40,10 @@ type serverOptions struct {
 	Policy  *policy
 	// WhoIs is required when Policy.mode uses WhoIs.
 	WhoIs whoisSource
-	// Owner returns this node's owner login ("" when tagged/unknown). It is
-	// consulted only when no allow-lists are configured.
-	Owner   func(ctx context.Context) string
+	// Local returns this node's own identity (owner login, MagicDNS
+	// suffix). It is consulted when no allow-lists are configured or when
+	// --allow-node is set.
+	Local   func(ctx context.Context) localIdentity
 	Reports reportSource
 	Log     *slog.Logger
 	Now     func() time.Time
@@ -63,7 +64,7 @@ type server struct {
 	version string
 	policy  *policy
 	whois   *whoisCache
-	owner   func(ctx context.Context) string
+	local   func(ctx context.Context) localIdentity
 	reports reportSource
 	log     *slog.Logger
 	now     func() time.Time
@@ -89,8 +90,8 @@ func newServer(o serverOptions) (*server, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	if o.Owner == nil {
-		o.Owner = func(context.Context) string { return "" }
+	if o.Local == nil {
+		o.Local = func(context.Context) localIdentity { return localIdentity{} }
 	}
 	health, err := json.Marshal(agentproto.HealthResponse{
 		OK:              true,
@@ -104,7 +105,7 @@ func newServer(o serverOptions) (*server, error) {
 		version: o.Version,
 		policy:  o.Policy,
 		whois:   newWhoisCache(o.WhoIs, o.WhoisTTL, o.Now),
-		owner:   o.Owner,
+		local:   o.Local,
 		reports: o.Reports,
 		log:     o.Log.With("component", "server"),
 		now:     o.Now,
@@ -206,11 +207,11 @@ func (s *server) authenticate(r *http.Request, ip string) (*source.WhoIs, int, s
 		}
 		return nil, http.StatusServiceUnavailable, "whois failed: " + err.Error()
 	}
-	var owner string
-	if !s.policy.hasAllowLists() {
-		owner = s.owner(ctx)
+	var local localIdentity
+	if s.policy.needsLocalIdentity() {
+		local = s.local(ctx)
 	}
-	ok, reason := s.policy.identityAllowed(w, owner)
+	ok, reason := s.policy.identityAllowed(w, local)
 	if !ok {
 		return w, http.StatusForbidden, reason
 	}

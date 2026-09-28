@@ -55,6 +55,20 @@ type whoisSource interface {
 	WhoIs(ctx context.Context, remoteAddr string) (*source.WhoIs, error)
 }
 
+// localIdentity is what the policy needs to know about this node, as
+// reported by the local tailscaled.
+type localIdentity struct {
+	// Owner is the node owner's login ("" when tagged or unknown). It is
+	// consulted only when no allow-lists are configured.
+	Owner string
+	// MagicDNSSuffix is the local tailnet's MagicDNS suffix, e.g.
+	// "example.ts.net" ("" when unknown). A bare --allow-node label matches
+	// only callers inside this suffix, so a node with the same base name in
+	// another tailnet (WhoIs reports shared nodes by their own FQDN) is not
+	// mistaken for the local one.
+	MagicDNSSuffix string
+}
+
 // policy is the immutable authorization configuration.
 type policy struct {
 	mode       authMode
@@ -107,18 +121,25 @@ func (p *policy) tokenOK(presented string) bool {
 	return subtle.ConstantTimeCompare(h[:], p.tokenHash[:]) == 1
 }
 
+// needsLocalIdentity reports whether identityAllowed consults the local
+// node's identity: the owner login for the default policy, the MagicDNS
+// suffix for bare --allow-node labels.
+func (p *policy) needsLocalIdentity() bool {
+	return !p.hasAllowLists() || len(p.allowNodes) > 0
+}
+
 // identityAllowed decides whether the resolved identity may read metrics.
-// owner is this node's owner login (empty for tagged nodes). With no
+// local describes this node (owner login, MagicDNS suffix). With no
 // allow-lists, the caller must be owned by the same user or carry hubTag;
 // otherwise it must match an allow-list entry. The returned reason is for
 // logs only.
-func (p *policy) identityAllowed(w *source.WhoIs, owner string) (bool, string) {
+func (p *policy) identityAllowed(w *source.WhoIs, local localIdentity) (bool, string) {
 	if w == nil {
 		return false, "no identity"
 	}
 	login := strings.ToLower(strings.TrimSpace(w.LoginName))
 	if !p.hasAllowLists() {
-		owner = strings.ToLower(strings.TrimSpace(owner))
+		owner := strings.ToLower(strings.TrimSpace(local.Owner))
 		if owner != "" && login == owner && !w.IsTagged {
 			return true, "owner match"
 		}
@@ -140,15 +161,21 @@ func (p *policy) identityAllowed(w *source.WhoIs, owner string) (bool, string) {
 			return true, "allow-tag " + t
 		}
 	}
-	if nodeMatches(p.allowNodes, w.NodeName) {
+	if nodeMatches(p.allowNodes, w.NodeName, local.MagicDNSSuffix) {
 		return true, "allow-node"
 	}
 	return false, "not in allow-lists"
 }
 
-// nodeMatches reports whether the node's MagicDNS name (with or without the
-// suffix) is in the set.
-func nodeMatches(set map[string]struct{}, nodeName string) bool {
+// nodeMatches reports whether the caller's MagicDNS name is in the set.
+// An entry given as FQDN matches that exact FQDN (or the same base name
+// when the daemon reports only a short name). An entry given as a bare
+// label matches a short caller name of that label, or label+"."+suffix
+// where suffix is the local tailnet's MagicDNS suffix; a caller with the
+// same label under a different (or, when the suffix is unknown, any)
+// domain is not matched, since WhoIs names nodes shared from other
+// tailnets by their own FQDN.
+func nodeMatches(set map[string]struct{}, nodeName, suffix string) bool {
 	if len(set) == 0 {
 		return false
 	}
@@ -159,21 +186,32 @@ func nodeMatches(set map[string]struct{}, nodeName string) bool {
 	if _, ok := set[fqdn]; ok {
 		return true
 	}
-	base, _, _ := strings.Cut(fqdn, ".")
+	base, domain, hasDomain := strings.Cut(fqdn, ".")
 	if base == "" {
 		return false
 	}
-	if _, ok := set[base]; ok {
-		return true
-	}
-	// An allow-list entry given as FQDN should also match by base name
-	// when the daemon reports only a short name.
-	for entry := range set {
-		if eb, _, _ := strings.Cut(entry, "."); eb == fqdn {
-			return true
+	if !hasDomain {
+		// An allow-list entry given as FQDN should also match by base name
+		// when the daemon reports only a short name.
+		for entry := range set {
+			if eb, _, _ := strings.Cut(entry, "."); eb == fqdn {
+				return true
+			}
 		}
+		return false
 	}
-	return false
+	suffix = normalizeSuffix(suffix)
+	if suffix == "" || domain != suffix {
+		return false
+	}
+	_, ok := set[base]
+	return ok
+}
+
+// normalizeSuffix lower-cases a MagicDNS suffix and strips surrounding
+// whitespace and dots.
+func normalizeSuffix(s string) string {
+	return strings.Trim(strings.ToLower(strings.TrimSpace(s)), ".")
 }
 
 // hasTag reports whether tags contains tag (case-insensitive).

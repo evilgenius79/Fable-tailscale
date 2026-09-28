@@ -30,6 +30,11 @@ Identities that match neither list get `403`.
 
 ### Browser hardening (applies to every `/api/` request)
 
+* The `Host` header must name this hub: the listen address, the hub's
+  Tailscale IPs and MagicDNS name, loopback when listening on loopback, or a
+  value from `--allowed-hosts` (e.g. a reverse-proxy or TLS name). Anything
+  else, including an attacker's domain re-pointed at the hub (DNS rebinding),
+  gets `403` before any other processing.
 * If `Sec-Fetch-Site` is present and is `cross-site`, respond `403`.
 * If `Origin` is present and its host does not equal the request `Host`, `403`.
 * Every non-GET request must carry the header `X-Requested-With: tailwatch`,
@@ -38,6 +43,8 @@ Identities that match neither list get `403`.
 * Security headers on every response: strict CSP (`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`, `Cache-Control: no-store` for `/api/`.
 * Request bodies are limited to 64 KiB. Server timeouts: read header 10s, read 30s, idle 120s; SSE handlers use no write timeout.
 * Per-identity rate limit: 20 requests/second burst 60 (`429` when exceeded).
+* Concurrent SSE streams are capped at 8 per identity and 256 in total;
+  further connects get `429` with `Retry-After: 5`.
 
 ### Errors
 

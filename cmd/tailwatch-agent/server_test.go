@@ -60,6 +60,9 @@ var identities = map[string]*source.WhoIs{
 	"100.64.0.11": {NodeID: "n11", NodeName: "bobbox.example.ts.net", NodeIP: "100.64.0.11", LoginName: "bob@example.com"},
 	"100.64.0.20": {NodeID: "n20", NodeName: "hub.example.ts.net", NodeIP: "100.64.0.20", LoginName: "tagged-device", IsTagged: true, Tags: []string{"tag:tailwatch"}},
 	"100.64.0.21": {NodeID: "n21", NodeName: "srv.example.ts.net", NodeIP: "100.64.0.21", LoginName: "tagged-device", IsTagged: true, Tags: []string{"tag:server"}},
+	// A node named "srv" from another tailnet (WhoIs reports it by its own
+	// FQDN); it must not pass as the local "srv".
+	"100.64.0.30": {NodeID: "n30", NodeName: "srv.evil-tailnet.ts.net", NodeIP: "100.64.0.30", LoginName: "tagged-device", IsTagged: true, Tags: []string{"tag:server"}},
 }
 
 var errDaemonDown = errors.New("tailscaled unavailable")
@@ -84,6 +87,7 @@ type testServerOpts struct {
 	tags    []string
 	nodes   []string
 	owner   string
+	suffix  string
 	whois   whoisSource
 	reports reportSource
 	log     slog.Handler
@@ -131,7 +135,7 @@ func newTestServer(t *testing.T, o testServerOpts) *server {
 		Version:   "v-test",
 		Policy:    pol,
 		WhoIs:     o.whois,
-		Owner:     func(context.Context) string { return o.owner },
+		Local:     func(context.Context) localIdentity { return localIdentity{Owner: o.owner, MagicDNSSuffix: o.suffix} },
 		Reports:   o.reports,
 		Log:       slog.New(o.log),
 		Now:       o.clock.now,
@@ -183,7 +187,10 @@ func TestAuthDecisions(t *testing.T) {
 		{"whois: allow-user", testServerOpts{owner: "alice@example.com", users: []string{"bob@example.com"}}, "100.64.0.11:4000", nil, 200, ""},
 		{"whois: allow-user excludes owner", testServerOpts{owner: "alice@example.com", users: []string{"bob@example.com"}}, "100.64.0.10:4000", nil, 403, "forbidden"},
 		{"whois: allow-tag", testServerOpts{tags: []string{"tag:server"}}, "100.64.0.21:4000", nil, 200, ""},
-		{"whois: allow-node base", testServerOpts{nodes: []string{"srv"}}, "100.64.0.21:4000", nil, 200, ""},
+		{"whois: allow-node base", testServerOpts{nodes: []string{"srv"}, suffix: "example.ts.net"}, "100.64.0.21:4000", nil, 200, ""},
+		{"whois: allow-node base rejects same name in foreign tailnet", testServerOpts{nodes: []string{"srv"}, suffix: "example.ts.net"}, "100.64.0.30:4000", nil, 403, "forbidden"},
+		{"whois: allow-node base rejects when local suffix unknown", testServerOpts{nodes: []string{"srv"}}, "100.64.0.21:4000", nil, 403, "forbidden"},
+		{"whois: allow-node fqdn of foreign node is explicit", testServerOpts{nodes: []string{"srv.evil-tailnet.ts.net"}}, "100.64.0.30:4000", nil, 200, ""},
 		{"whois: allow-node fqdn", testServerOpts{nodes: []string{"laptop.example.ts.net"}}, "100.64.0.10:4000", nil, 200, ""},
 		{"whois: allow-node other forbidden", testServerOpts{nodes: []string{"laptop"}}, "100.64.0.11:4000", nil, 403, "forbidden"},
 		{"whois: unknown peer forbidden", testServerOpts{owner: "alice@example.com"}, "100.64.0.50:4000", nil, 403, "forbidden"},

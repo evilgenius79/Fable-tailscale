@@ -12,10 +12,12 @@ export interface ToggleProps {
   className?: string
   /** Put the label before the switch (default) or after. */
   labelPosition?: 'start' | 'end'
+  /** Accessible name when there is no visible `label` (table cells, icon-only rows). */
+  'aria-label'?: string
 }
 
 /** Accessible switch (role="switch"). */
-export function Toggle({ checked, onCheckedChange, label, description, size = 'md', disabled, id, className, labelPosition = 'start' }: ToggleProps) {
+export function Toggle({ checked, onCheckedChange, label, description, size = 'md', disabled, id, className, labelPosition = 'start', 'aria-label': ariaLabel }: ToggleProps) {
   const gen = useId()
   const switchId = id ?? gen
   const labelId = `${switchId}-label`
@@ -28,6 +30,7 @@ export function Toggle({ checked, onCheckedChange, label, description, size = 'm
       role="switch"
       aria-checked={checked}
       aria-labelledby={label ? labelId : undefined}
+      aria-label={!label ? ariaLabel : undefined}
       aria-describedby={description ? descId : undefined}
       disabled={disabled}
       onClick={() => onCheckedChange(!checked)}

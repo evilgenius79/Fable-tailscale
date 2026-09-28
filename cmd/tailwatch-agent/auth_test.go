@@ -93,36 +93,46 @@ func TestIdentityAllowed(t *testing.T) {
 		return &source.WhoIs{LoginName: "tagged-device", NodeName: node, Tags: tags, IsTagged: true}
 	}
 	type lists struct{ users, tags, nodes []string }
+	const suffix = "example.ts.net"
 	tests := []struct {
-		name  string
-		lists lists
-		owner string
-		w     *source.WhoIs
-		want  bool
+		name   string
+		lists  lists
+		owner  string
+		suffix string
+		w      *source.WhoIs
+		want   bool
 	}{
-		{"default: owner match", lists{}, "alice@example.com", user("alice@example.com", "laptop.example.ts.net"), true},
-		{"default: owner match case-insensitive", lists{}, "Alice@Example.com", user("alice@example.com", "laptop"), true},
-		{"default: other user denied", lists{}, "alice@example.com", user("bob@example.com", "laptop"), false},
-		{"default: tag:tailwatch allowed", lists{}, "alice@example.com", tagged("hub", "tag:server", "tag:tailwatch"), true},
-		{"default: tag:tailwatch case-insensitive", lists{}, "alice@example.com", tagged("hub", "Tag:TailWatch"), true},
-		{"default: other tag denied", lists{}, "alice@example.com", tagged("hub", "tag:server"), false},
-		{"default: tagged self, untagged caller denied", lists{}, "", user("alice@example.com", "laptop"), false},
-		{"default: tagged self, empty login denied", lists{}, "", user("", "laptop"), false},
-		{"default: tagged self, tag:tailwatch allowed", lists{}, "", tagged("hub", "tag:tailwatch"), true},
-		{"default: login equal but tagged flag denied", lists{}, "alice@example.com", &source.WhoIs{LoginName: "alice@example.com", IsTagged: true, Tags: []string{"tag:x"}}, false},
-		{"default: nil identity", lists{}, "alice@example.com", nil, false},
-		{"lists: owner no longer implied", lists{users: []string{"bob@example.com"}}, "alice@example.com", user("alice@example.com", "laptop"), false},
-		{"lists: tag:tailwatch no longer implied", lists{users: []string{"bob@example.com"}}, "alice@example.com", tagged("hub", "tag:tailwatch"), false},
-		{"lists: user match", lists{users: []string{"Bob@Example.com"}}, "alice@example.com", user("bob@example.com", "laptop"), true},
-		{"lists: tag match any", lists{tags: []string{"tag:hub"}}, "", tagged("hub", "tag:x", "TAG:HUB"), true},
-		{"lists: tag no match", lists{tags: []string{"tag:hub"}}, "", tagged("hub", "tag:x"), false},
-		{"lists: node base name matches fqdn", lists{nodes: []string{"hub"}}, "", tagged("hub.example.ts.net", "tag:x"), true},
-		{"lists: node fqdn matches fqdn", lists{nodes: []string{"hub.example.ts.net"}}, "", user("carol@example.com", "Hub.Example.ts.net."), true},
-		{"lists: node fqdn entry matches short name", lists{nodes: []string{"hub.example.ts.net"}}, "", user("carol@example.com", "hub"), true},
-		{"lists: node prefix is not enough", lists{nodes: []string{"hub"}}, "", user("carol@example.com", "hub2.example.ts.net"), false},
-		{"lists: node different suffix denied", lists{nodes: []string{"hub.example.ts.net"}}, "", user("carol@example.com", "hub.other.ts.net"), false},
-		{"lists: empty node name", lists{nodes: []string{"hub"}}, "", user("carol@example.com", ""), false},
-		{"lists: any list matches", lists{users: []string{"x"}, tags: []string{"tag:y"}, nodes: []string{"hub"}}, "", user("carol@example.com", "hub.example.ts.net"), true},
+		{"default: owner match", lists{}, "alice@example.com", suffix, user("alice@example.com", "laptop.example.ts.net"), true},
+		{"default: owner match case-insensitive", lists{}, "Alice@Example.com", suffix, user("alice@example.com", "laptop"), true},
+		{"default: other user denied", lists{}, "alice@example.com", suffix, user("bob@example.com", "laptop"), false},
+		{"default: tag:tailwatch allowed", lists{}, "alice@example.com", suffix, tagged("hub", "tag:server", "tag:tailwatch"), true},
+		{"default: tag:tailwatch case-insensitive", lists{}, "alice@example.com", suffix, tagged("hub", "Tag:TailWatch"), true},
+		{"default: other tag denied", lists{}, "alice@example.com", suffix, tagged("hub", "tag:server"), false},
+		{"default: tagged self, untagged caller denied", lists{}, "", suffix, user("alice@example.com", "laptop"), false},
+		{"default: tagged self, empty login denied", lists{}, "", suffix, user("", "laptop"), false},
+		{"default: tagged self, tag:tailwatch allowed", lists{}, "", suffix, tagged("hub", "tag:tailwatch"), true},
+		{"default: login equal but tagged flag denied", lists{}, "alice@example.com", suffix, &source.WhoIs{LoginName: "alice@example.com", IsTagged: true, Tags: []string{"tag:x"}}, false},
+		{"default: nil identity", lists{}, "alice@example.com", suffix, nil, false},
+		{"lists: owner no longer implied", lists{users: []string{"bob@example.com"}}, "alice@example.com", suffix, user("alice@example.com", "laptop"), false},
+		{"lists: tag:tailwatch no longer implied", lists{users: []string{"bob@example.com"}}, "alice@example.com", suffix, tagged("hub", "tag:tailwatch"), false},
+		{"lists: user match", lists{users: []string{"Bob@Example.com"}}, "alice@example.com", suffix, user("bob@example.com", "laptop"), true},
+		{"lists: tag match any", lists{tags: []string{"tag:hub"}}, "", suffix, tagged("hub", "tag:x", "TAG:HUB"), true},
+		{"lists: tag no match", lists{tags: []string{"tag:hub"}}, "", suffix, tagged("hub", "tag:x"), false},
+		{"lists: node base name matches fqdn", lists{nodes: []string{"hub"}}, "", suffix, tagged("hub.example.ts.net", "tag:x"), true},
+		{"lists: node fqdn matches fqdn", lists{nodes: []string{"hub.example.ts.net"}}, "", suffix, user("carol@example.com", "Hub.Example.ts.net."), true},
+		{"lists: node fqdn entry matches short name", lists{nodes: []string{"hub.example.ts.net"}}, "", suffix, user("carol@example.com", "hub"), true},
+		{"lists: node prefix is not enough", lists{nodes: []string{"hub"}}, "", suffix, user("carol@example.com", "hub2.example.ts.net"), false},
+		{"lists: node different suffix denied", lists{nodes: []string{"hub.example.ts.net"}}, "", suffix, user("carol@example.com", "hub.other.ts.net"), false},
+		{"lists: node base name suffix case-insensitive with dots", lists{nodes: []string{"HUB"}}, "", ".Example.TS.net.", user("carol@example.com", "Hub.Example.ts.net."), true},
+		{"lists: node base name matches short caller", lists{nodes: []string{"hub"}}, "", suffix, user("carol@example.com", "hub"), true},
+		{"lists: node base name matches short caller without suffix", lists{nodes: []string{"hub"}}, "", "", user("carol@example.com", "hub"), true},
+		{"lists: node base name rejects foreign tailnet", lists{nodes: []string{"hub"}}, "", suffix, tagged("hub.evil-tailnet.ts.net", "tag:x"), false},
+		{"lists: node base name rejects deeper domain", lists{nodes: []string{"hub"}}, "", suffix, user("carol@example.com", "hub.sub.example.ts.net"), false},
+		{"lists: node base name rejects unknown local suffix", lists{nodes: []string{"hub"}}, "", "", user("carol@example.com", "hub.example.ts.net"), false},
+		{"lists: node fqdn entry still exact with foreign suffix", lists{nodes: []string{"hub.evil-tailnet.ts.net"}}, "", suffix, tagged("hub.evil-tailnet.ts.net", "tag:x"), true},
+		{"lists: node fqdn entry ignores local suffix", lists{nodes: []string{"hub.example.ts.net"}}, "", "", user("carol@example.com", "hub.example.ts.net"), true},
+		{"lists: empty node name", lists{nodes: []string{"hub"}}, "", suffix, user("carol@example.com", ""), false},
+		{"lists: any list matches", lists{users: []string{"x"}, tags: []string{"tag:y"}, nodes: []string{"hub"}}, "", suffix, user("carol@example.com", "hub.example.ts.net"), true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -130,7 +140,7 @@ func TestIdentityAllowed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, reason := p.identityAllowed(tc.w, tc.owner)
+			got, reason := p.identityAllowed(tc.w, localIdentity{Owner: tc.owner, MagicDNSSuffix: tc.suffix})
 			if got != tc.want {
 				t.Fatalf("identityAllowed = %v (%s), want %v", got, reason, tc.want)
 			}

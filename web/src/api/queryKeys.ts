@@ -36,7 +36,9 @@ export const queryKeys = {
 
   alertsAll: ['alerts'] as const,
   alerts: (params: AlertsParams) => ['alerts', 'list', params] as const,
-  rules: ['alerts', 'rules'] as const,
+  // Own root, not under `alertsAll`: alert stream events and acks invalidate
+  // every alert list and must not refetch (or rewrite) the rules.
+  rules: ['rules'] as const,
 
   topology: ['topology'] as const,
   auditAll: ['audit'] as const,

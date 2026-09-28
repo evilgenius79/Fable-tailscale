@@ -27,6 +27,22 @@ const TaggedDeviceLogin = "tagged-device"
 // control plane assigns to tagged nodes.
 const taggedDevicesPseudoUser = "tagged-devices"
 
+// PeerRelayLabel prefixes the relay label of a connection that goes through
+// a Tailscale peer relay (another tailnet node forwarding UDP for two peers
+// that cannot connect directly) rather than a DERP server. tailscaled
+// reports such a connection with an empty CurAddr/Endpoint, no DERP region
+// and the peer relay address in PeerRelay, while Relay still holds the
+// peer's home DERP region as it always does. Mapping the peer relay into the
+// relay label (see peerRelayLabel) keeps the collector's classification
+// honest: the path is relayed, but not through the home DERP.
+const PeerRelayLabel = "peer-relay"
+
+// peerRelayLabel returns the relay label for a peer relay address of the
+// form "ip:port:vni:N": "peer-relay ip:port:vni:N".
+func peerRelayLabel(addr string) string {
+	return PeerRelayLabel + " " + addr
+}
+
 // MapStatus converts a daemon status into a source.LocalStatus. It is
 // nil-safe for every optional field of ipnstate.Status. Peers are sorted by
 // DNS name (then ID, then public key) for deterministic output.
@@ -86,7 +102,9 @@ func comparePeers(a, b source.LocalPeer) int {
 // MapPeer converts one ipnstate.PeerStatus into a source.LocalPeer. st is
 // used to resolve user profiles and may be nil; ps may be nil (zero value is
 // returned). Tagged nodes report an empty owner login, per the LocalPeer
-// contract.
+// contract. A peer reached through a peer relay (no current direct address,
+// PeerRelay set) reports the peer relay as its Relay instead of the home
+// DERP region, see PeerRelayLabel.
 func MapPeer(st *ipnstate.Status, ps *ipnstate.PeerStatus) source.LocalPeer {
 	if ps == nil {
 		return source.LocalPeer{}
@@ -113,6 +131,9 @@ func MapPeer(st *ipnstate.Status, ps *ipnstate.PeerStatus) source.LocalPeer {
 		Expired:       ps.Expired,
 		ShareeNode:    ps.ShareeNode,
 		Location:      mapLocation(ps.Location),
+	}
+	if ps.PeerRelay != "" && ps.CurAddr == "" {
+		p.Relay = peerRelayLabel(ps.PeerRelay)
 	}
 	if !ps.PublicKey.IsZero() {
 		p.PublicKey = ps.PublicKey.String()
@@ -178,12 +199,16 @@ func MapWhoIs(resp *apitype.WhoIsResponse) (*source.WhoIs, error) {
 }
 
 // MapPing converts a daemon ping result into a source.PingReply. A nil
-// result maps to the zero value.
+// result maps to the zero value. A reply that travelled through a peer relay
+// (no direct endpoint, no DERP region, PeerRelay set) carries the peer relay
+// label (see PeerRelayLabel) in DERPRegionCode with DERPRegionID left at 0,
+// so the collector classifies the path as relayed via that label rather than
+// as an unclassifiable reply.
 func MapPing(res *ipnstate.PingResult) source.PingReply {
 	if res == nil {
 		return source.PingReply{}
 	}
-	return source.PingReply{
+	r := source.PingReply{
 		LatencyMs:      res.LatencySeconds * 1000,
 		Endpoint:       res.Endpoint,
 		DERPRegionID:   res.DERPRegionID,
@@ -191,6 +216,10 @@ func MapPing(res *ipnstate.PingResult) source.PingReply {
 		NodeName:       res.NodeName,
 		Err:            res.Err,
 	}
+	if res.PeerRelay != "" && res.Endpoint == "" && res.DERPRegionID == 0 {
+		r.DERPRegionCode = peerRelayLabel(res.PeerRelay)
+	}
+	return r
 }
 
 // mapLocation converts an optional tailcfg.Location.

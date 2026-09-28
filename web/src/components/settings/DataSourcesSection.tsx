@@ -29,7 +29,7 @@ function SourceCard({ icon: Icon, title, tone, status, rows, note }: { icon: Luc
           </div>
         ))}
       </dl>
-      {note ? <p className="mt-3 text-[11px] leading-4 text-fg-faint">{note}</p> : null}
+      {note ? <p className="mt-3 text-[11px] leading-4 text-fg-muted">{note}</p> : null}
     </div>
   )
 }
@@ -39,7 +39,7 @@ function Interval({ label, value, hint }: { label: string; value: string; hint: 
     <div className="rounded-lg border border-border px-3 py-2.5">
       <p className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">{label}</p>
       <p className="num mt-0.5 text-lg font-semibold leading-7 text-fg">{value}</p>
-      <p className="text-[11px] text-fg-faint">{hint}</p>
+      <p className="text-[11px] text-fg-muted">{hint}</p>
     </div>
   )
 }

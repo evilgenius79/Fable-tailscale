@@ -225,6 +225,16 @@ export function clampZoom(k: number, minK = 0.25, maxK = 4): number {
   return Math.max(minK, Math.min(maxK, k))
 }
 
+/**
+ * Labels, glyphs and strokes keep their screen size when zooming in (like a
+ * map UI): everything inside the world-space group is counter-scaled by this.
+ * Zooming out is not compensated, otherwise constant-size labels would
+ * collide as the layout shrinks.
+ */
+export function counterScale(k: number): number {
+  return 1 / Math.max(1, k)
+}
+
 /** Zoom about a viewport point so the point under the cursor stays put. */
 export function zoomAt(t: Transform, factor: number, px: number, py: number, minK = 0.25, maxK = 4): Transform {
   const k = clampZoom(t.k * factor, minK, maxK)

@@ -7,9 +7,9 @@
 # Data:      /var/lib/tailwatch (StateDirectory, created by systemd, owned by the service user).
 # Logs:      journalctl -u tailwatch -f
 #
-# The hub only needs: the tailscaled LocalAPI socket (read access is enough for
-# status + WhoIs; disco pings need write access, see docs/DEPLOY.md), outbound
-# HTTPS to api.tailscale.com (optional) and TCP to agents on the tailnet.
+# The hub only needs: the tailscaled LocalAPI socket (plain read access covers
+# status, WhoIs and disco pings — no operator rights, see docs/DEPLOY.md),
+# outbound HTTPS to api.tailscale.com (optional) and TCP to agents on the tailnet.
 
 [Unit]
 Description=Tailwatch hub (Tailscale network viewer and watchdog)
@@ -20,10 +20,12 @@ Requires=tailscaled.service
 
 [Service]
 Type=simple
-# Dedicated system user (created by scripts/install-hub.sh). To grant it
-# write access to tailscaled (needed for on-demand/periodic disco pings):
+# Dedicated system user (created by scripts/install-hub.sh); DynamicUser=yes
+# works too. It needs no tailscaled operator rights: status, WhoIs and pings
+# are all served to read-only LocalAPI clients. Only if your tailscaled build
+# denies pings (permission errors from "ping" in the log) either run
 #   sudo tailscale set --operator=tailwatch
-# Alternatively use DynamicUser=yes and set TAILWATCH_PING_INTERVAL=0.
+# or set TAILWATCH_PING_INTERVAL=0 in hub.env.
 User=tailwatch
 Group=tailwatch
 # Uncomment if your tailscaled socket is group-restricted (not the Linux default):
@@ -69,9 +71,10 @@ RemoveIPC=yes
 
 # --- Network / syscalls -----------------------------------------------------
 # AF_UNIX: tailscaled socket. AF_INET/AF_INET6: listener, agents, control API.
-# AF_NETLINK: Go's net.Interfaces() (used to find the Tailscale IP for
-# --listen auto); drop it if you always pass an explicit --listen.
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+# AF_NETLINK is deliberately absent: the hub never enumerates interfaces (it
+# asks tailscaled for its Tailscale IP, also for --listen auto). Add it only if
+# the log shows "address family not supported by protocol" socket errors.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
 SystemCallErrorNumber=EPERM

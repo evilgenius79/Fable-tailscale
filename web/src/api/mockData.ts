@@ -609,7 +609,7 @@ export function buildAudit(now: number): AuditEntry[] {
     { id: 68, ts: m(770), actor: 'bob@example.com', actorNode: 'dev-workstation', action: 'alert.ack', target: '1039', ok: true, remoteIp: '100.64.0.14' },
     { id: 67, ts: m(2 * 24 * 60), actor: 'alice@example.com', actorNode: 'alice-mbp', action: 'alert.ack', target: '1045', ok: true, remoteIp: '100.64.0.4' },
     { id: 66, ts: m(2 * 24 * 60 + 40), actor: 'bob@example.com', actorNode: 'bob-thinkpad', action: 'device.authorize', target: dev('contractor-laptop').id, ok: false, error: 'control API: 403 Forbidden (key lacks devices:write)', remoteIp: '100.64.0.5' },
-    { id: 65, ts: m(3 * 24 * 60), actor: 'alice@example.com', actorNode: 'alice-mbp', action: 'rule.save', target: 'high_latency', details: { threshold: 250, forSeconds: 300 }, ok: true, remoteIp: '100.64.0.4' },
+    { id: 65, ts: m(3 * 24 * 60), actor: 'alice@example.com', actorNode: 'alice-mbp', action: 'rule.update', target: 'high_latency', details: { threshold: 250, forSeconds: 300 }, ok: true, remoteIp: '100.64.0.4' },
     { id: 64, ts: m(5 * 24 * 60), actor: 'alice@example.com', actorNode: 'alice-mbp', action: 'alerts.test', target: 'webhook', details: { sent: ['webhook'] }, ok: true, remoteIp: '100.64.0.4' },
   ]
 }

@@ -4,11 +4,13 @@
 // UI.
 //
 // Every response passes through one middleware chain: panic recovery,
-// request logging, security headers and, under /api/, a 64 KiB body limit,
-// cross-site request rejection, authentication with per-IP identity
-// caching, a per-identity token-bucket rate limit and a 30 second handler
-// timeout (the SSE stream is exempt from the timeout). /healthz answers
-// without authentication; every other non-API path serves the UI.
+// request logging, security headers and, under /api/, a Host allow-list
+// (the DNS-rebinding defence), a 64 KiB body limit, cross-site request
+// rejection, authentication with per-IP identity caching, a per-identity
+// token-bucket rate limit and a 30 second handler timeout (the SSE stream
+// is exempt from the timeout but capped in number per identity and in
+// total). /healthz answers without authentication; every other non-API
+// path serves the UI.
 package httpapi
 
 import (
@@ -81,6 +83,8 @@ type Server struct {
 	log     *slog.Logger
 	auth    Authenticator
 	limiter *rateLimiter
+	hosts   *hostPolicy
+	streams streamGauge
 	handler http.Handler
 	tls     bool
 
@@ -90,6 +94,9 @@ type Server struct {
 	heartbeat time.Duration
 	// handlerTimeout bounds non-streaming handlers; tests shorten it.
 	handlerTimeout time.Duration
+	// maxStreamsPerIdentity and maxStreamsTotal cap concurrently open SSE
+	// streams; tests lower them.
+	maxStreamsPerIdentity, maxStreamsTotal int
 	// autoRetry and autoTimeout tune --listen auto resolution.
 	autoRetry, autoTimeout time.Duration
 
@@ -135,13 +142,17 @@ func NewServer(d Deps) (*Server, error) {
 		log:            d.Log,
 		auth:           auth,
 		limiter:        newRateLimiter(rateLimitPerSecond, rateLimitBurst, nil),
+		hosts:          newHostPolicy(d.Cfg),
 		tls:            d.Cfg.TLSCert != "" && d.Cfg.TLSKey != "",
 		now:            time.Now,
 		heartbeat:      sseHeartbeat,
 		handlerTimeout: handlerTimeout,
-		autoRetry:      autoRetryInterval,
-		autoTimeout:    autoRetryTimeout,
-		shutdown:       make(chan struct{}),
+
+		maxStreamsPerIdentity: maxStreamsPerIdentity,
+		maxStreamsTotal:       maxStreamsTotal,
+		autoRetry:             autoRetryInterval,
+		autoTimeout:           autoRetryTimeout,
+		shutdown:              make(chan struct{}),
 	}
 	s.handler = s.buildHandler()
 	return s, nil
@@ -153,7 +164,7 @@ func (s *Server) Handler() http.Handler { return s.handler }
 
 // buildHandler assembles the middleware chain and top-level routing.
 func (s *Server) buildHandler() http.Handler {
-	api := bodyLimit(browserHardening(s.authenticate(s.rateLimit(s.apiMux()))))
+	api := s.requireKnownHost(bodyLimit(browserHardening(s.authenticate(s.rateLimit(s.apiMux())))))
 	ui := newUIHandler(s.d.UI)
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -218,6 +229,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		srv.TLSConfig = tlsConfig(cert)
 		scheme = "https"
 	}
+	s.hosts.setBound(ln.Addr().String())
 	s.log.Info("httpapi: listening", "url", scheme+"://"+ln.Addr().String(), "authMode", s.cfg.AuthMode(), "tls", s.tls, "version", s.d.Version)
 	if s.cfg.AuthMode() == authModeNone && !s.cfg.Demo {
 		s.log.Warn("httpapi: authentication is DISABLED (--insecure-no-auth); every caller is an admin")

@@ -32,9 +32,15 @@ export function DeviceSubtitle({ device }: { device: Device }) {
       <span className="truncate font-mono text-[13px] text-fg-secondary">{device.dnsName}</span>
       <CopyButton value={device.dnsName} label="Copy DNS name" size="xs" className="-my-1" />
       {hostDiffers ? (
-        <span className="text-fg-muted">
-          · hostname <span className="font-mono text-[13px] text-fg-secondary">{device.hostname}</span>
-        </span>
+        <>
+          {/* On phones the hostname takes its own line, so the separator would otherwise start it like a stray bullet. */}
+          <span className="hidden text-fg-muted sm:inline" aria-hidden="true">
+            ·
+          </span>
+          <span className="basis-full text-fg-muted sm:basis-auto">
+            hostname <span className="font-mono text-[13px] text-fg-secondary">{device.hostname}</span>
+          </span>
+        </>
       ) : null}
     </span>
   )

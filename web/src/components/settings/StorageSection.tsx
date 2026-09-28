@@ -29,7 +29,7 @@ export function StorageSection({ settings, loading }: StorageSectionProps) {
                 { key: 'Events & alerts', value: formatRetentionDays(settings?.eventRetentionDays), hint: '--event-retention' },
               ]}
             />
-            <p className="mt-3 text-[11px] leading-4 text-fg-faint">Nothing secret is stored: no API keys, tokens or webhook URLs. Back it up with sqlite3 .backup.</p>
+            <p className="mt-3 text-[11px] leading-4 text-fg-muted">Nothing secret is stored: no API keys, tokens or webhook URLs. Back it up with sqlite3 .backup.</p>
           </div>
           <div>
             <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">Database</p>

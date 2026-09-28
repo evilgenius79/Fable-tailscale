@@ -101,7 +101,7 @@ export function ConnectivityTab({ device, canManage, onApproveRoutes }: Connecti
   ]
 
   const keyItems: KeyValueItem[] = [
-    { key: 'Key expiry', value: <span className={TONE_TEXT_CLS[key.tone]}>{key.text}</span> },
+    { key: 'Key expiry', value: <span className={TONE_TEXT_CLS[key.tone]}>{key.text}</span>, wrap: true },
     {
       key: 'Client version',
       value: (

@@ -42,8 +42,10 @@ export function DeviceNameCell({ device, dense, link, plain, showTags = true, cl
   const Icon = deviceIcon(device)
   const hostDiffers = device.hostname && device.hostname.toLowerCase() !== device.name.toLowerCase()
   const statusText = st.tone === 'online' ? null : st.label
-  // Dense rows keep the full name and let the status text truncate instead.
-  const name = <span className={cn('font-medium text-fg', dense ? 'shrink-0 whitespace-nowrap' : 'truncate')}>{device.name}</span>
+  // Dense rows keep the full name and let the status text truncate instead — but a
+  // name can be up to 63 chars, so it is capped at the cell width (max-w-full +
+  // truncate) rather than painting over the next column.
+  const name = <span className={cn('font-medium text-fg', dense ? 'max-w-full shrink-0 truncate' : 'truncate')}>{device.name}</span>
   return (
     <div className={cn('flex min-w-0 items-center gap-2.5', className)}>
       <StatusDot tone={st.tone} label={st.label} size="sm" />
@@ -93,7 +95,7 @@ export function OSCell({ device, dense }: { device: Device; dense?: boolean }) {
   const m = device.metrics
   const sub = device.deviceModel ?? (m?.platform ? `${m.platform}${m.platformVersion ? ` ${m.platformVersion}` : ''}` : undefined)
   return (
-    <div className={cn('flex min-w-0 items-center gap-2', dense ? 'max-w-[220px]' : 'max-w-[150px]')}>
+    <div className={cn('flex min-w-0 items-center gap-2', dense ? 'max-w-[180px]' : 'max-w-[130px]')}>
       <os.icon className="size-4 shrink-0 text-fg-muted" aria-hidden="true" />
       <div className="min-w-0 leading-tight">
         <div className="truncate text-fg">

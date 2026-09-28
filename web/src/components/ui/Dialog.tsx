@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { cn } from '../../lib/cn'
+import { FOCUSABLE, useFocusTrap } from '../../lib/useFocusTrap'
 import { Button, type ButtonVariant } from './Button'
 
 export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'full'
@@ -31,8 +32,6 @@ const SIZES: Record<DialogSize, string> = {
   full: 'sm:max-w-[min(96vw,1200px)]',
 }
 
-const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
-
 /**
  * Accessible modal: portal, focus trap, Escape/backdrop close, scroll lock,
  * focus restored to the opener. Renders nothing when closed.
@@ -41,6 +40,13 @@ export function Dialog({ open, onClose, title, description, children, footer, si
   const id = useId()
   const panelRef = useRef<HTMLDivElement>(null)
   const openerRef = useRef<Element | null>(null)
+  // Callers routinely pass an inline `onClose`; keep it in a ref so a new
+  // identity on every parent render (e.g. each SSE tick) does not re-run the
+  // open effect, which would steal focus / blur inputs and toggle the scroll lock.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  useFocusTrap(panelRef, open)
 
   useEffect(() => {
     if (!open) return
@@ -50,28 +56,9 @@ export function Dialog({ open, onClose, title, description, children, footer, si
     const focusTarget = initialFocus?.current ?? panelRef.current?.querySelector<HTMLElement>(FOCUSABLE) ?? panelRef.current
     const raf = requestAnimationFrame(() => focusTarget?.focus())
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        onClose()
-        return
-      }
-      if (e.key !== 'Tab' || !panelRef.current) return
-      const nodes = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((n) => n.offsetParent !== null || n === document.activeElement)
-      if (!nodes.length) {
-        e.preventDefault()
-        panelRef.current.focus()
-        return
-      }
-      const first = nodes[0]!
-      const last = nodes[nodes.length - 1]!
-      const active = document.activeElement
-      if (e.shiftKey && (active === first || !panelRef.current.contains(active))) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault()
-        first.focus()
-      }
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      onCloseRef.current()
     }
     document.addEventListener('keydown', onKey, true)
     return () => {
@@ -81,7 +68,7 @@ export function Dialog({ open, onClose, title, description, children, footer, si
       const opener = openerRef.current
       if (opener instanceof HTMLElement && document.contains(opener)) opener.focus()
     }
-  }, [open, onClose, initialFocus])
+  }, [open, initialFocus])
 
   if (!open) return null
 

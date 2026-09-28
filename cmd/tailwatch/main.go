@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -33,6 +32,11 @@ import (
 	"github.com/evilgenius79/fable-tailscale/web"
 )
 
+// demoBackfill is how much synthetic history a fresh demo database gets. It
+// is a variable so tests can shrink it: a full day of samples takes tens of
+// seconds to generate under the race detector.
+var demoBackfill = 24 * time.Hour
+
 const (
 	exitOK    = 0
 	exitFatal = 1
@@ -41,9 +45,6 @@ const (
 	// demoSeed makes every demo instance identical, which keeps screenshots
 	// and documentation reproducible.
 	demoSeed = 1
-
-	// demoBackfill is how much synthetic history a fresh demo database gets.
-	demoBackfill = 24 * time.Hour
 
 	// shutdownGrace bounds how long components may take to stop after a
 	// signal before the process exits anyway.
@@ -279,18 +280,20 @@ func buildSources(ctx context.Context, cfg *config.Config, st *store.Store, log 
 	return local, api, agents, nil
 }
 
-// buildNotifiers returns the configured alert notifiers.
+// buildNotifiers returns the configured alert notifiers. Each gets the
+// alerts package's own HTTP client (nil here), which has a timeout and never
+// follows redirects, so a payload or token is never re-sent to a host the
+// endpoint redirects to.
 func buildNotifiers(cfg *config.Config) []alerts.Notifier {
-	hc := &http.Client{Timeout: 10 * time.Second}
 	var out []alerts.Notifier
 	if cfg.WebhookURL != "" {
-		out = append(out, alerts.NewWebhook(cfg.WebhookURL, cfg.WebhookSecret, hc))
+		out = append(out, alerts.NewWebhook(cfg.WebhookURL, cfg.WebhookSecret, nil))
 	}
 	if cfg.SlackWebhookURL != "" {
-		out = append(out, alerts.NewSlack(cfg.SlackWebhookURL, hc))
+		out = append(out, alerts.NewSlack(cfg.SlackWebhookURL, nil))
 	}
 	if cfg.NtfyURL != "" {
-		out = append(out, alerts.NewNtfy(cfg.NtfyURL, cfg.NtfyToken, hc))
+		out = append(out, alerts.NewNtfy(cfg.NtfyURL, cfg.NtfyToken, nil))
 	}
 	return out
 }

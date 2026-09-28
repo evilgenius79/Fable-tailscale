@@ -14,6 +14,8 @@ import (
 	"github.com/evilgenius79/fable-tailscale/internal/alerts"
 	"github.com/evilgenius79/fable-tailscale/internal/source"
 	"github.com/evilgenius79/fable-tailscale/internal/store"
+	"github.com/evilgenius79/fable-tailscale/internal/tsapi"
+	"github.com/evilgenius79/fable-tailscale/internal/tslocal"
 )
 
 // Error codes from docs/API.md.
@@ -100,9 +102,12 @@ func (s *Server) writeAPIError(w http.ResponseWriter, r *http.Request, err error
 }
 
 // writeUpstreamError maps a control API / LocalAPI failure to a response.
-// The upstream packages scrub credentials from their errors, so the text is
-// safe to return.
+// Only a control API error message (*tsapi.APIError, which tsapi scrubs) is
+// returned to the caller; every other failure is logged in full and
+// answered with a fixed message, because LocalAPI errors carry operator
+// details such as the socket path and remediation hints.
 func (s *Server) writeUpstreamError(w http.ResponseWriter, r *http.Request, err error) {
+	var ae *tsapi.APIError
 	switch {
 	case errors.Is(err, source.ErrNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, "device not found upstream")
@@ -110,9 +115,15 @@ func (s *Server) writeUpstreamError(w http.ResponseWriter, r *http.Request, err 
 		writeError(w, http.StatusNotImplemented, codeNotConfigured, "the control API is not configured on this hub")
 	case errors.Is(err, context.DeadlineExceeded):
 		writeError(w, http.StatusBadGateway, codeUpstream, "upstream request timed out")
+	case errors.Is(err, tslocal.ErrDaemonUnavailable), errors.Is(err, tslocal.ErrPermissionDenied):
+		s.log.Warn("httpapi: tailscaled unavailable", "method", r.Method, "path", r.URL.Path, "err", err)
+		writeError(w, http.StatusBadGateway, codeUpstream, "tailscaled is unavailable on the hub")
+	case errors.As(err, &ae):
+		s.log.Warn("httpapi: control API error", "method", r.Method, "path", r.URL.Path, "err", err)
+		writeError(w, http.StatusBadGateway, codeUpstream, truncateText(trimErrorPrefix(ae.Error()), 300))
 	default:
 		s.log.Warn("httpapi: upstream error", "method", r.Method, "path", r.URL.Path, "err", err)
-		writeError(w, http.StatusBadGateway, codeUpstream, truncateText(trimErrorPrefix(err.Error()), 300))
+		writeError(w, http.StatusBadGateway, codeUpstream, "upstream request failed")
 	}
 }
 

@@ -89,8 +89,17 @@ func TestRollupIdempotentAndWatermark(t *testing.T) {
 	if again := readRollups(t, s, "d1"); len(again) != 3 || again[2].samples != 3 {
 		t.Errorf("re-run changed rollups: %+v", again)
 	}
-	if n, err := s.Rollup(ctx, at(100)); err != nil || n != 0 {
-		t.Errorf("Rollup older than watermark = %d, %v; want 0", n, err)
+	// A horizon behind the watermark (clock went backwards) triggers a
+	// rescan that leaves existing rollups intact and moves the watermark
+	// back to the horizon's bucket.
+	if _, err := s.Rollup(ctx, at(100)); err != nil {
+		t.Errorf("Rollup older than watermark: %v", err)
+	}
+	if again := readRollups(t, s, "d1"); len(again) != 3 || again[0].samples != 20 || again[2].samples != 3 {
+		t.Errorf("rescan behind watermark changed rollups: %+v", again)
+	}
+	if wm, _, _ := s.GetKV(ctx, kvRollupWatermark); wm != itoa(base) {
+		t.Errorf("watermark after rescan = %s, want %d", wm, base)
 	}
 
 	// More samples arrive for the partial bucket; it is completed later.
@@ -152,6 +161,117 @@ func TestRollupIdempotentAndWatermark(t *testing.T) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+
+// TestRollupWatermarkAheadOfHorizon: a watermark in the future (the hub ran
+// with a wrong clock) must not stall rollups until real time catches up.
+func TestRollupWatermarkAheadOfHorizon(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t, "")
+	var samples []model.Sample
+	for ts := int64(0); ts < 645; ts += 15 {
+		samples = append(samples, model.Sample{DeviceID: "d1", TS: at(ts), Online: true})
+	}
+	if err := s.InsertSamples(ctx, samples); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetKV(ctx, kvRollupWatermark, itoa(base+30*86_400)); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.Rollup(ctx, at(650))
+	if err != nil {
+		t.Fatalf("Rollup: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("Rollup wrote %d buckets, want 3 (full rescan)", n)
+	}
+	got := readRollups(t, s, "d1")
+	if len(got) != 3 || got[0].samples != 20 || got[1].samples != 20 || got[2].samples != 3 {
+		t.Errorf("rollups after rescan = %+v", got)
+	}
+	if wm, ok, err := s.GetKV(ctx, kvRollupWatermark); err != nil || !ok || wm != itoa(base+600) {
+		t.Errorf("watermark = %q %v %v, want %d", wm, ok, err, base+600)
+	}
+}
+
+// TestPruneKeepsUnrolledSamples: raw samples at or after the rollup watermark
+// belong to a bucket that Rollup still has to (re)compute, so Prune keeps
+// them even when they are older than the raw retention.
+func TestPruneKeepsUnrolledSamples(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t, "")
+	now := fixedNow
+	if err := s.InsertSamples(ctx, []model.Sample{
+		{DeviceID: "d1", TS: now.Add(-3 * time.Hour)},
+		{DeviceID: "d1", TS: now.Add(-90 * time.Minute)}, // >= watermark: kept
+		{DeviceID: "d1", TS: now.Add(-30 * time.Minute)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetKV(ctx, kvRollupWatermark, itoa(now.Add(-90*time.Minute).Unix())); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Prune(ctx, time.Hour, 0, 0)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if res.Samples != 1 {
+		t.Errorf("pruned %d samples, want 1", res.Samples)
+	}
+	st, err := s.Stats(ctx)
+	if err != nil || st.Samples != 2 {
+		t.Errorf("samples left = %d, %v; want 2", st.Samples, err)
+	}
+	// A watermark older than the cutoff is the only thing that narrows the
+	// deletion; a watermark newer than the cutoff leaves retention alone.
+	if err := s.SetKV(ctx, kvRollupWatermark, itoa(now.Unix())); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Prune(ctx, time.Hour, 0, 0); err != nil || res.Samples != 1 {
+		t.Errorf("Prune with newer watermark = %+v, %v; want 1 sample", res, err)
+	}
+}
+
+// TestMaintainCycleKeepsBucketsComplete replays the collector's hourly
+// Rollup(now-1h)+Prune(raw=1h) cycle: with the raw retention equal to the
+// rollup lag, the partial bucket straddling the horizon must still be
+// completed from all its samples on the next run.
+func TestMaintainCycleKeepsBucketsComplete(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t, "")
+	t0 := fixedNow
+	var samples []model.Sample
+	for ts := t0.Add(-4 * time.Hour); ts.Before(t0.Add(3 * time.Hour)); ts = ts.Add(15 * time.Second) {
+		samples = append(samples, model.Sample{DeviceID: "d1", TS: ts, Online: true})
+	}
+	if err := s.InsertSamples(ctx, samples); err != nil {
+		t.Fatal(err)
+	}
+	for _, now := range []time.Time{t0.Add(12 * time.Minute), t0.Add(72 * time.Minute), t0.Add(132 * time.Minute)} {
+		s.now = func() time.Time { return now }
+		if _, err := s.Rollup(ctx, now.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Prune(ctx, time.Hour, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Every bucket completed before the last horizon (t0+72m -> buckets up
+	// to t0+65m) must be built from all 20 samples.
+	horizon := t0.Add(70 * time.Minute).Unix()
+	for _, r := range readRollups(t, s, "d1") {
+		if r.bucket < horizon && r.samples != 20 {
+			t.Errorf("bucket %s has %d samples, want 20", time.Unix(r.bucket, 0).UTC().Format("15:04"), r.samples)
+		}
+	}
+	// The samples of the bucket at the watermark survived pruning.
+	var left int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM samples WHERE ts >= ? AND ts < ?`, horizon, horizon+300).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 20 {
+		t.Errorf("%d raw samples left in the watermark bucket, want 20", left)
+	}
+}
 
 func TestPrune(t *testing.T) {
 	ctx := context.Background()
