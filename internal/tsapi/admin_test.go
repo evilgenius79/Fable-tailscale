@@ -68,7 +68,7 @@ func TestAdminActionRequests(t *testing.T) {
 			if got := r.Header.Get("Content-Type"); got != tc.wantType {
 				t.Errorf("content-type = %q, want %q", got, tc.wantType)
 			}
-			if got := r.Header.Get("Authorization"); got != "Bearer tskey-api-TESTKEY" {
+			if got := r.Header.Get("Authorization"); got != "Bearer test-api-key-TESTKEY" {
 				t.Errorf("Authorization = %q", got)
 			}
 		})

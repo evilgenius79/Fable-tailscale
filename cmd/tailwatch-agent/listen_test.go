@@ -96,7 +96,7 @@ func TestResolveListenPolicy(t *testing.T) {
 	}
 }
 
-func TestResolveAutoRetriesUntilIPv4(t *testing.T) {
+func TestResolveAutoRetriesUntilIP(t *testing.T) {
 	fs := &fakeStatus{fn: func(n int) (*source.LocalStatus, error) {
 		switch n {
 		case 1:
@@ -116,7 +116,8 @@ func TestResolveAutoRetriesUntilIPv4(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "100.64.0.7:41820" || fs.calls != 4 || sleeps != 3 {
+	// Attempt 3 already has a Tailscale IPv6 address; do not wait for IPv4.
+	if got != "[fd7a:115c:a1e0::7]:41820" || fs.calls != 3 || sleeps != 2 {
 		t.Fatalf("addr=%q calls=%d sleeps=%d", got, fs.calls, sleeps)
 	}
 }
@@ -127,7 +128,7 @@ func TestResolveAutoTimesOut(t *testing.T) {
 	r.retry, r.timeout = time.Nanosecond, 0
 	r.sleep = func(context.Context, time.Duration) bool { return true }
 	_, err := r.resolve(context.Background(), listenAuto, 41820, false)
-	if err == nil || !strings.Contains(err.Error(), "could not determine a Tailscale IPv4") || !strings.Contains(err.Error(), "no daemon") || !strings.Contains(err.Error(), ":41820") {
+	if err == nil || !strings.Contains(err.Error(), "could not determine a Tailscale IP") || !strings.Contains(err.Error(), "no daemon") || !strings.Contains(err.Error(), ":41820") {
 		t.Fatalf("err = %v", err)
 	}
 	if fs.calls < 1 {
@@ -152,5 +153,11 @@ func TestFirstIPv4(t *testing.T) {
 	}
 	if _, ok := firstIPv4([]string{"fd7a:115c:a1e0::1"}); ok {
 		t.Fatal("v6-only should not match")
+	}
+	if ip, ok := firstTailscaleIP([]string{"fd7a:115c:a1e0::1"}); !ok || ip.String() != "fd7a:115c:a1e0::1" {
+		t.Fatalf("v6 fallback got %v %v", ip, ok)
+	}
+	if ip, ok := firstTailscaleIP([]string{"fd7a:115c:a1e0::1", "100.64.0.9"}); !ok || ip.String() != "100.64.0.9" {
+		t.Fatalf("v4 preferred got %v %v", ip, ok)
 	}
 }

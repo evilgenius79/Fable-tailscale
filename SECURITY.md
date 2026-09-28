@@ -29,7 +29,7 @@ The full model and hardening guide is in [docs/SECURITY.md](docs/SECURITY.md).
 |---|---|
 | Internet → hub | The hub binds a Tailscale IP only (`--listen auto`); it is never reachable from outside the tailnet. No public ports, no reverse proxy needed. |
 | Tailnet peer → hub | Every request is attributed to a tailnet identity through `tailscaled` **WhoIs** on the source IP. There are no passwords, sessions, cookies or tokens to steal. Tailscale ACLs decide who can even connect. |
-| Viewer → admin | Roles come from `--admins` / `--admin-tags` (and `--viewers` / `--viewer-tags`). Admin-only endpoints: rule edits, acks, test notifications, audit log, refresh and device actions. |
+| Viewer → admin | Roles come from `--admins` / `--admin-tags` (and `--viewers` / `--viewer-tags`). Admin-only endpoints: rule edits, acks, on-demand ping, test notifications, audit log, refresh and device actions. |
 | Browser page → hub | Same-origin only: `Sec-Fetch-Site: cross-site` and mismatched `Origin` are rejected, every write needs `X-Requested-With: tailwatch`, no CORS headers are ever sent, strict CSP, `frame-ancestors 'none'`. |
 | Hub → agents | Agents listen on their Tailscale IP only, authenticate the caller with WhoIs and/or a shared token, allow-list by user, tag or node, rate limit, and never expose more than read-only system metrics. |
 | Hub → Tailscale API | Optional. Read scope by default; write scope only when you opt into `--enable-admin-actions`. Every admin action is audited. |

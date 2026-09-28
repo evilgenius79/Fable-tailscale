@@ -54,13 +54,13 @@ func newListenResolver(st statusSource, log *slog.Logger) *listenResolver {
 	}
 }
 
-// resolve returns the "host:port" to bind. "auto" polls tailscaled for the
-// first Tailscale IPv4 address (retrying while the daemon comes up); any
-// other value must be a Tailscale, loopback or, with insecure, arbitrary
-// IP literal.
+// resolve returns the "host:port" to bind. "auto" polls tailscaled for a
+// Tailscale address (IPv4 preferred, IPv6 fallback) while the daemon comes
+// up; any other value must be a Tailscale, loopback or, with insecure,
+// arbitrary IP literal.
 func (r *listenResolver) resolve(ctx context.Context, listen string, port int, insecure bool) (string, error) {
 	if listen == listenAuto {
-		ip, err := r.autoIPv4(ctx, port)
+		ip, err := r.autoIP(ctx, port)
 		if err != nil {
 			return "", err
 		}
@@ -86,9 +86,9 @@ func (r *listenResolver) resolve(ctx context.Context, listen string, port int, i
 	return net.JoinHostPort(ip.String(), strconv.Itoa(p)), nil
 }
 
-// autoIPv4 asks tailscaled for its first Tailscale IPv4 address, retrying
-// every r.retry for up to r.timeout.
-func (r *listenResolver) autoIPv4(ctx context.Context, port int) (netip.Addr, error) {
+// autoIP asks tailscaled for a Tailscale address, preferring IPv4 and
+// falling back to IPv6, retrying every r.retry for up to r.timeout.
+func (r *listenResolver) autoIP(ctx context.Context, port int) (netip.Addr, error) {
 	if r.status == nil {
 		return netip.Addr{}, errors.New("listen auto: no tailscaled client configured")
 	}
@@ -104,19 +104,19 @@ func (r *listenResolver) autoIPv4(ctx context.Context, port int) (netip.Addr, er
 		case st == nil:
 			lastErr = errors.New("empty status")
 		default:
-			if ip, ok := firstIPv4(st.TailscaleIPs); ok {
+			if ip, ok := firstTailscaleIP(st.TailscaleIPs); ok {
 				return ip, nil
 			}
-			lastErr = fmt.Errorf("tailscaled reports no IPv4 address yet (state %q)", st.BackendState)
+			lastErr = fmt.Errorf("tailscaled reports no Tailscale IP yet (state %q)", st.BackendState)
 		}
 		if ctx.Err() != nil {
 			return netip.Addr{}, fmt.Errorf("listen auto: %w (last error: %v)", ctx.Err(), lastErr)
 		}
 		if time.Now().Add(r.retry).After(deadline) {
-			return netip.Addr{}, fmt.Errorf("listen auto: could not determine a Tailscale IPv4 address after %s: %w; is tailscaled running and logged in? (or pass --listen <tailscale-ip>:%d)", r.timeout, lastErr, port)
+			return netip.Addr{}, fmt.Errorf("listen auto: could not determine a Tailscale IP address after %s: %w; is tailscaled running and logged in? (or pass --listen <tailscale-ip>:%d)", r.timeout, lastErr, port)
 		}
 		if attempt == 1 {
-			r.log.Info("waiting for tailscaled to report a Tailscale IPv4 address", "retryEvery", r.retry, "timeout", r.timeout, "err", lastErr)
+			r.log.Info("waiting for tailscaled to report a Tailscale IP address", "retryEvery", r.retry, "timeout", r.timeout, "err", lastErr)
 		} else {
 			r.log.Debug("still waiting for tailscaled", "attempt", attempt, "err", lastErr)
 		}
@@ -162,6 +162,25 @@ func firstIPv4(addrs []string) (netip.Addr, bool) {
 		}
 		a = a.Unmap()
 		if a.Is4() {
+			return a, true
+		}
+	}
+	return netip.Addr{}, false
+}
+
+// firstTailscaleIP prefers the first IPv4 address and falls back to the
+// first IPv6 address reported by tailscaled.
+func firstTailscaleIP(addrs []string) (netip.Addr, bool) {
+	if ip, ok := firstIPv4(addrs); ok {
+		return ip, true
+	}
+	for _, s := range addrs {
+		a, err := netip.ParseAddr(s)
+		if err != nil {
+			continue
+		}
+		a = a.Unmap()
+		if a.Is6() && !a.IsLoopback() && !a.IsUnspecified() {
 			return a, true
 		}
 	}

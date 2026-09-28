@@ -71,7 +71,7 @@ Tailscale API or LocalAPI failure), `internal` (500).
 | GET | `/api/v1/devices/{id}/series?range=1h` | viewer | `Series` |
 | GET | `/api/v1/devices/{id}/uptime?range=24h` | viewer | `UptimeReport` |
 | GET | `/api/v1/devices/{id}/events?limit=50` | viewer | `Event[]` |
-| POST | `/api/v1/devices/{id}/ping` | viewer | `PingResult` (on-demand disco ping; 10s timeout) |
+| POST | `/api/v1/devices/{id}/ping` | admin | `PingResult` (on-demand disco ping; 10s timeout) |
 | POST | `/api/v1/devices/{id}/authorize` | admin* | `{ "authorized": true }` → `Device` |
 | POST | `/api/v1/devices/{id}/tags` | admin* | `{ "tags": ["tag:server"] }` → `Device` |
 | POST | `/api/v1/devices/{id}/key-expiry` | admin* | `{ "disabled": true }` → `Device` |
