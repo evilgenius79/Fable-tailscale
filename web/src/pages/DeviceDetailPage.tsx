@@ -152,7 +152,7 @@ export default function DeviceDetailPage() {
         title={<DeviceTitle device={device} />}
         description={<DeviceSubtitle device={device} />}
         meta={<DeviceMeta device={device} />}
-        actions={<DeviceActions device={device} canManage={canManage} requestedDialog={requestedDialog} onDialogHandled={() => setRequestedDialog(null)} />}
+        actions={<DeviceActions device={device} canPing={isAdmin} canManage={canManage} requestedDialog={requestedDialog} onDialogHandled={() => setRequestedDialog(null)} />}
         compact
       >
         <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
