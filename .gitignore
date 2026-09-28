@@ -1,0 +1,32 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Data
+*.db
+*.db-wal
+*.db-shm
+/data/
+
+# Web
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+web/.vite/
+web/playwright-report/
+web/test-results/
+web/screenshots/
+
+# Env / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
